@@ -25,12 +25,12 @@ This is a monorepo of AI/ML projects — multiple independent applications shari
 ```bash
 cd boarding-agent-api
 pip install -r requirements.txt
-python -m app.main          # run dev server
-uvicorn main:app --reload   # alternative
+python -m app.main          # run dev server on port 7777 (Agno default — matches frontend proxy)
 pytest test/test02.py       # run a single test
 pytest test/                # run all tests
 docker build -t boarding-agent-api . && docker run -p 8080:8080 boarding-agent-api
 ```
+> **Note:** Do NOT use `uvicorn main:app --reload` for local dev — uvicorn defaults to port 8000, which won't match the frontend proxy (targets 7777). Use `python -m app.main` instead.
 
 ### BoardingAgent (Next.js)
 ```bash
