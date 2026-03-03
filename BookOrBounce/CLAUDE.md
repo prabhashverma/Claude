@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Scope
 
-Always work within `C:\AIML\BookOrBounce\` only. Do not explore parent directories.
+Always work within `C:\AIML\DoINeedAVisa\` only. Do not explore parent directories.
 
 ---
 
@@ -12,8 +12,8 @@ Always work within `C:\AIML\BookOrBounce\` only. Do not explore parent directori
 
 | Project | Stack | Location |
 |---|---|---|
-| `BookOrBounce-Website/` | Vite + React 18 + TypeScript + MUI + MapLibre | Frontend SPA |
-| `BookOrBounce-API/` | Python FastAPI + Agno + OpenAI + PostgreSQL | Backend API |
+| `DoINeedAVisa-Website/` | Vite + React 18 + TypeScript + MUI + MapLibre | Frontend SPA |
+| `DoINeedAVisa-API/` | Python FastAPI + Agno + OpenAI + PostgreSQL | Backend API |
 
 These are two independent repos (each has its own `.git/`).
 
@@ -23,7 +23,7 @@ These are two independent repos (each has its own `.git/`).
 
 ### Website (Vite + React)
 ```bash
-cd BookOrBounce-Website
+cd DoINeedAVisa-Website
 npm install
 npm run dev        # dev server → http://localhost:5173
 npm run build      # tsc + vite build
@@ -33,7 +33,7 @@ npm run preview    # preview production build
 
 ### API (Python / FastAPI)
 ```bash
-cd BookOrBounce-API
+cd DoINeedAVisa-API
 pip install -r requirements.txt
 python -m app.main          # dev server on port 7777 (Agno default)
 pytest                      # run all tests
@@ -45,7 +45,7 @@ pytest                      # run all tests
 **Docker:**
 ```bash
 docker-compose up           # API on localhost:8000 (maps 8000→container 8080)
-docker build -t bookorbounce-api . && docker run -p 8080:8080 bookorbounce-api
+docker build -t doineedavisa-api . && docker run -p 8080:8080 doineedavisa-api
 ```
 
 ---
@@ -61,7 +61,7 @@ docker build -t bookorbounce-api . && docker run -p 8080:8080 bookorbounce-api
 All API calls go through `src/api.ts`:
 ```typescript
 export const API_BASE = VITE_API_URL || '/api';
-bookOrBounceUrl(fresh)  // POST /api/bookorbounce[?fresh=true]
+doINeedAVisaUrl(fresh)  // POST /api/doineedavisa[?fresh=true]
 checkVisasUrl()         // POST /api/v1/checkvisas
 ```
 
@@ -69,14 +69,14 @@ checkVisasUrl()         // POST /api/v1/checkvisas
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /bookorbounce` | Main flight validation (streaming + non-streaming) |
-| `GET /bookorbounce/sample` | Sample itinerary |
+| `POST /doineedavisa` | Main flight validation (streaming + non-streaming) |
+| `GET /doineedavisa/sample` | Sample itinerary |
 | `POST /v1/checkvisas` | Visa-only check (used by CheckMapPage) |
 | `GET /health` | Health check |
 
 ### Streaming (SSE)
 
-`POST /bookorbounce?stream=true` yields events in order:
+`POST /doineedavisa?stream=true` yields events in order:
 `started` → `status` → `reasoning` → `content` → `leg_done` → `done`
 
 Vite proxy sets `cache-control: no-cache` and `x-accel-buffering: no` to prevent SSE buffering.
