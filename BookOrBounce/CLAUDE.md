@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Scope
 
-Always work within `C:\AIML\DoINeedAVisa\` only. Do not explore parent directories.
+Work within `C:\AIML\BookOrBounce\` only. Do not explore parent directories.
 
 ---
 
@@ -12,10 +12,10 @@ Always work within `C:\AIML\DoINeedAVisa\` only. Do not explore parent directori
 
 | Project | Stack | Location |
 |---|---|---|
-| `DoINeedAVisa-Website/` | Vite + React 18 + TypeScript + MUI + MapLibre | Frontend SPA |
-| `DoINeedAVisa-API/` | Python FastAPI + Agno + OpenAI + PostgreSQL | Backend API |
+| `DoINeedAVisa-Website/` | Vite 5 + React 18 + TypeScript + MUI v7 + MapLibre GL | Frontend SPA |
+| `DoINeedAVisa-API/` | Python 3.10 + FastAPI + Agno + Gemini + PostgreSQL + PgVector | Backend API |
 
-These are two independent repos (each has its own `.git/`).
+These are two independent git repos (each has its own `.git/`).
 
 ---
 
@@ -26,21 +26,23 @@ These are two independent repos (each has its own `.git/`).
 cd DoINeedAVisa-Website
 npm install
 npm run dev        # dev server → http://localhost:5173
-npm run build      # tsc + vite build
+npm run build      # tsc -b + vite build
 npm run lint       # ESLint
 npm run preview    # preview production build
 ```
+
+No test runner configured (no Vitest/Jest/Playwright).
 
 ### API (Python / FastAPI)
 ```bash
 cd DoINeedAVisa-API
 pip install -r requirements.txt
 python -m app.main          # dev server on port 7777 (Agno default)
-pytest                      # run all tests
+pytest test/                # all tests (integration — hit localhost:7777)
+pytest test/test02.py       # single test
 ```
 
 > **Do NOT use `uvicorn main:app --reload`** — uvicorn defaults to port 8000, which won't match the frontend proxy (targets 7777). Use `python -m app.main`.
-> **No `--reload` flag** — user does not want hot reloading.
 
 **Docker:**
 ```bash
@@ -54,73 +56,97 @@ docker build -t doineedavisa-api . && docker run -p 8080:8080 doineedavisa-api
 
 ### Frontend → Backend Connection
 
-- **Dev:** Vite proxy rewrites `/api/*` → `http://localhost:7777/*`
+- **Dev:** Vite proxy rewrites `/api/*` → `http://localhost:7777/*` (configurable via `VITE_API_TARGET`)
 - **Production:** `vercel.json` rewrites `/api/*` → Railway API URL; SPA catch-all `/(.*) → /index.html`
-- **`VITE_API_URL`** env var overrides the base URL for cross-origin deploys (e.g. streaming from Vercel to Railway)
+- **`VITE_API_URL`** env var overrides the base URL in `src/api.ts` for cross-origin deploys
 
 All API calls go through `src/api.ts`:
 ```typescript
 export const API_BASE = VITE_API_URL || '/api';
-doINeedAVisaUrl(fresh)  // POST /api/doineedavisa[?fresh=true]
-checkVisasUrl()         // POST /api/v1/checkvisas
 ```
 
-### API Routes
+### API Endpoints
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /doineedavisa` | Main flight validation (streaming + non-streaming) |
+| `POST /doineedavisa` | Flight validation (SSE streaming with `?stream=true`, `?fresh=true` bypasses cache) |
 | `GET /doineedavisa/sample` | Sample itinerary |
-| `POST /v1/checkvisas` | Visa-only check (used by CheckMapPage) |
+| `POST /v1/checkvisas` | Non-streaming visa check (passport_index lookup) |
+| `POST /v1/checkvisas/world` | SSE world scan — Tier 1 enriched results |
+| `POST /v1/checkvisas/detail` | Single-country deep dive — Tier 2 (cached) |
+| `POST /v1/visa-feedback` | Thumbs up/down votes (triggers correction pipeline on thumbs-down) |
+| `GET /v1/visa-types/{code}` | Country-specific visa types |
+| `POST /v1/admin/refresh-cache` | Cache refresh (requires `ADMIN_API_KEY`) |
 | `GET /health` | Health check |
-
-### Streaming (SSE)
-
-`POST /doineedavisa?stream=true` yields events in order:
-`started` → `status` → `reasoning` → `content` → `leg_done` → `done`
-
-Vite proxy sets `cache-control: no-cache` and `x-accel-buffering: no` to prevent SSE buffering.
 
 ### Agent Architecture
 
-Single `BookingAgent` (`agents/booking_agent.py`) evaluates the full journey per direction (departing/returning). It uses:
-- **DuckDuckGo** — web search for visa/entry rules
-- **`search_airport_knowledge`** — PostgreSQL vectordb (airport experiences)
-- **`search_layover_knowledge`** — PostgreSQL vectordb (transit/layover rules)
-- **`save_new_knowledge`** — async persistence of verified rules
+All agents use **Gemini** models via Agno framework (NOT OpenAI).
 
-**Cache:** Per-route + passport key, stored in Postgres + in-memory. Default TTL 24h. `?fresh=true` bypasses it.
+| Agent | File | Model | Role |
+|---|---|---|---|
+| BookingAgent | `agents/booking_agent.py` | `gemini-2.5-flash` | Full flight validation: visa, terminal, lounge, layover |
+| VisaDeepSearchAgent | `agents/visa_deep_search_agent.py` | `gemini-2.5-flash-lite` | Tier 1 world scan (Google Search grounding) |
+| VisaDetailAgent | `agents/visa_detail_agent.py` | `gemini-2.5-flash` | Tier 2 single-country deep dive (Google Search + DuckDuckGo) |
 
-**Models:** Configurable via env vars (`MODEL_ID_BOOKING_AGENT`, etc.), default `gpt-4o` / `gpt-4o-mini`.
+BookingAgent tools: DuckDuckGo web search, `search_airport_knowledge` (PgVector RAG), `search_layover_knowledge` (PgVector RAG), `save_new_knowledge`.
+
+### Streaming (SSE)
+
+**Flight check** (`POST /doineedavisa?stream=true`):
+`started` → `status` → `reasoning` → `agent_event` → `content` → `leg_done` → `done`
+
+**World scan** (`POST /v1/checkvisas/world`):
+`cached_batch` (pre-computed results) → `complete` (agent-enriched results)
+
+Vite proxy injects `cache-control: no-cache` and `x-accel-buffering: no` on `text/event-stream` responses.
+
+### Caching
+
+- **In-memory agent cache** (`app/agent_cache.py`) — per-route + passport key
+- **visa_check_cache** (`db/visa_check_cache.py`) — per-country Postgres cache, 7-day TTL
+- **passport_index** (`db/passport_index.py`) — pre-computed visa data from passport-index-dataset CSV
+
+`?fresh=true` bypasses all caches.
+
+### Database
+
+Auto-created tables using `_ensure_table()` pattern — no manual migrations needed for new tables.
+
+**Pattern:** `db/<module>.py` with `_get_engine()`, `_ensure_table(conn)`, lazy singleton engine.
+
+Key tables:
+- `passport_index` — pre-computed visa requirements (ISO3 pairs)
+- `visa_check_cache` — agent-enriched results with TTL
+- `visa_feedback` — thumbs up/down votes
+- `agent_validations` / `flight_validations` — audit trail
+- `ai.*_knowledge_contents/vectors` — 4 PgVector RAG tables (visa_compliance, layover_visa, airport_experience, travel_advisory)
 
 ### Input / Output Schema
 
-**Request** (`ValidateFlightPayload`): `passengers[]` (nationality, visas, lounge_access) + `slices[]` (id, label, segments[]).
+**Request** (`ValidateFlightPayload` in `app/input_schema.py`): `passengers[]` (nationality, visas, lounge_access) + `slices[]` (id, label, segments[]).
 
-**Response** (`JourneyValidationOutput`): `global_verdict` (GO/CAUTION/NO-GO) + `overall_reasoning` + `slices[]` each containing `sections[]` (segment or layover with visa requirements, terminal info, lounge access).
+**Response** (`JourneyValidationOutput` in `app/output_schema.py`): `global_verdict` (GO/CAUTION/NO-GO) + `overall_reasoning` + `slices[]` with `sections[]`.
 
-### Map (CheckMapPage)
+**Tier 2 Detail** (`VisaDetailResponse` in `app/schema.py`): summary + entry requirements + visa_detail (one of: visa_free/voa/evisa/consular/banned) + sources + data_freshness.
 
-- Uses **MapLibre GL** + `react-map-gl` with a CARTO Positron base style (no MapTiler key needed)
-- Custom GeoJSON country fill layer inserted **below** base label layers (`beforeId`) so country names stay visible
-- Fill colors driven by a MapLibre `match` expression on `ISO_A2` property
-- Countries GeoJSON loaded from `/public/countries.geojson` with CDN fallback to jsdelivr
+### Frontend Routing
 
-### Frontend Data
+Defined in `src/App.tsx`:
+- `/` → HomePage (world scan + country cards)
+- `/check-transit-visa` → CheckPage (flight check form)
+- `/checkvisa` → CheckPage (visa-only mode)
+- `/checkmap` → CheckMapPage (map-based visa checker)
+- `/visa-free-countries` → VisaFreeCountriesPage
+- `/what-is-doineedavisa` → About page
+- Plus SEO pages, stream-test, power-flyer
 
-Static data lives in `src/data/`:
-- `airports.json` (781 KB) — IATA lookup with coordinates
-- `countries.ts`, `countryRegions.ts`, `countryCentroids.ts` — country metadata for map/selects
-- `visaTypes.ts`, `loungeCards.ts` — domain constants
-- `testItineraries.ts` — sample flights for UI dev/testing
+### Map (CheckMapPage + FlightMap)
 
-### Key Frontend Files
-
-- `src/App.tsx` — route definitions + MUI ThemeProvider (light/dark from localStorage)
-- `src/api.ts` — single source of truth for API URLs
-- `src/types/itinerary.ts` — shared TypeScript types (`Passenger`, `FlightSegment`, `Itinerary`, `FormattedLeg`)
-- `src/components/CheckPage.tsx` — main flight check form (most complex component)
-- `src/components/CheckMapPage.tsx` — map-based visa checker
+- **MapLibre GL** + `react-map-gl` with CARTO Positron base style (no MapTiler key needed)
+- GeoJSON country fill layer inserted below base label layers (`beforeId`)
+- Fill colors driven by MapLibre `match` expression on `ISO_A2` property
+- Countries GeoJSON from `/public/countries.geojson` with CDN fallback
 
 ---
 
@@ -128,22 +154,25 @@ Static data lives in `src/data/`:
 
 ### Website (`.env`)
 ```
-VITE_MAPTILER_KEY=   # Optional — unlocks extra map styles
 VITE_API_URL=        # Optional — override API base for cross-origin (Vercel + Railway)
+VITE_MAPTILER_KEY=   # Optional — unlocks extra map styles
 ```
 
 ### API (`.env`)
 ```
-OPENAI_API_KEY=      # Required
-DATABASE_URL=        # Required — PostgreSQL connection string
-MODEL_ID_BOOKING_AGENT=gpt-4o
-MODEL_ID_PAYLOAD_BUILDER=gpt-4o-mini
-VALIDATION_CACHE_TTL_SECONDS=86400
+GOOGLE_API_KEY=      # Required — Gemini models (fails fast if missing)
+DATABASE_URL=        # Required — PostgreSQL connection string (fails fast if missing)
+MODEL_ID_BOOKING_AGENT=gemini-2.5-flash    # default
+VALIDATION_CACHE_TTL_SECONDS=86400         # 24h default
+VISA_CHECK_CACHE_TTL_SECONDS=604800        # 7-day default
+ADMIN_API_KEY=       # Optional — protects /v1/admin/refresh-cache
 ```
+
+> Note: `.env.example` is outdated (lists `OPENAI_API_KEY` and old agent model vars). The actual code requires `GOOGLE_API_KEY`.
 
 ---
 
 ## Deployment
 
-- **Website** → Vercel (auto-deploy on push to `main`)
+- **Website** → Vercel (auto-deploy on push to `main`, domain: `doineedavisa.app`)
 - **API** → Railway (Dockerfile, reads `$PORT` env var, default 8080)
