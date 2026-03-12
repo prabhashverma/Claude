@@ -213,16 +213,25 @@
     shadowRoot.appendChild(container);
     document.body.appendChild(overlayHost);
 
+    // Build passport list and visa pills
+    buildPassportList('');
+    renderVisaPills('');
+
     // Load saved preferences
     chrome.storage.local.get(['dinav_passport', 'dinav_visa'], function (data) {
-      var passportSel = shadowRoot.querySelector('#dinav-passport');
-      var visaSel = shadowRoot.querySelector('#dinav-visa');
-      if (data.dinav_passport && passportSel) {
-        passportSel.value = data.dinav_passport;
-        updateVisaOptions(passportSel.value);
+      if (data.dinav_passport) {
+        selectPassport(data.dinav_passport, true);
       }
-      if (data.dinav_visa && visaSel) {
-        visaSel.value = data.dinav_visa;
+      if (data.dinav_visa) {
+        shadowRoot.querySelector('#dinav-visa').value = data.dinav_visa;
+        // Re-render visa pills with saved selection
+        renderVisaPills(data.dinav_passport || '');
+        var pills = shadowRoot.querySelectorAll('.dinav-visa-pill');
+        for (var i = 0; i < pills.length; i++) {
+          if (pills[i].getAttribute('data-visa') === data.dinav_visa) {
+            pills[i].classList.add('active');
+          }
+        }
       }
     });
 
@@ -231,12 +240,159 @@
 
     // Event listeners
     shadowRoot.querySelector('#dinav-close').addEventListener('click', closeOverlay);
-    shadowRoot.querySelector('#dinav-passport').addEventListener('change', function () {
-      updateVisaOptions(this.value);
+
+    // Passport dropdown toggle
+    shadowRoot.querySelector('#dinav-passport-trigger').addEventListener('click', function () {
+      var menu = shadowRoot.querySelector('#dinav-passport-menu');
+      var isOpen = menu.classList.contains('open');
+      menu.classList.toggle('open');
+      if (!isOpen) {
+        var input = shadowRoot.querySelector('#dinav-passport-search');
+        input.value = '';
+        buildPassportList('');
+        setTimeout(function () { input.focus(); }, 50);
+      }
     });
+
+    // Passport search
+    shadowRoot.querySelector('#dinav-passport-search').addEventListener('input', function () {
+      buildPassportList(this.value);
+    });
+
+    // Close passport menu when clicking outside
+    container.addEventListener('click', function (e) {
+      var dropdown = shadowRoot.querySelector('#dinav-passport-dropdown');
+      if (dropdown && !dropdown.contains(e.target)) {
+        shadowRoot.querySelector('#dinav-passport-menu').classList.remove('open');
+      }
+    });
+
     shadowRoot.querySelector('#dinav-check').addEventListener('click', function () {
       runVisaCheck(parsed);
     });
+  }
+
+  function buildPassportList(query) {
+    if (!shadowRoot) return;
+    var list = shadowRoot.querySelector('#dinav-passport-list');
+    if (!list) return;
+    list.innerHTML = '';
+    var q = (query || '').toLowerCase().trim();
+    var currentVal = shadowRoot.querySelector('#dinav-passport').value;
+
+    var POPULAR = ['IND', 'USA', 'GBR', 'CHN', 'PHL', 'NGA', 'BRA', 'MEX', 'PAK', 'CAN'];
+    var popular = [];
+    var rest = [];
+
+    for (var i = 0; i < DINAV_COUNTRIES.length; i++) {
+      var c = DINAV_COUNTRIES[i];
+      if (q && c.name.toLowerCase().indexOf(q) === -1 && c.iso3.toLowerCase().indexOf(q) === -1 && c.code.toLowerCase().indexOf(q) === -1) continue;
+      if (!q && POPULAR.indexOf(c.iso3) !== -1) {
+        popular.push(c);
+      } else {
+        rest.push(c);
+      }
+    }
+
+    // Sort popular by POPULAR order
+    popular.sort(function (a, b) { return POPULAR.indexOf(a.iso3) - POPULAR.indexOf(b.iso3); });
+
+    function renderRow(c) {
+      var row = document.createElement('div');
+      row.className = 'dinav-select-row' + (currentVal === c.iso3 ? ' selected' : '');
+      row.innerHTML = '<img class="dinav-flag" src="' + flagUrl(c.code, 16) + '" alt="" />'
+        + '<span>' + c.name + '</span>';
+      row.addEventListener('click', function () {
+        selectPassport(c.iso3, false);
+        shadowRoot.querySelector('#dinav-passport-menu').classList.remove('open');
+      });
+      return row;
+    }
+
+    if (popular.length > 0 && !q) {
+      var header = document.createElement('div');
+      header.className = 'dinav-select-group-label';
+      header.textContent = 'POPULAR';
+      list.appendChild(header);
+      for (var p = 0; p < popular.length; p++) {
+        list.appendChild(renderRow(popular[p]));
+      }
+      var divider = document.createElement('div');
+      divider.className = 'dinav-select-divider';
+      list.appendChild(divider);
+    }
+
+    for (var r = 0; r < rest.length; r++) {
+      list.appendChild(renderRow(rest[r]));
+    }
+  }
+
+  function selectPassport(iso3, silent) {
+    if (!shadowRoot) return;
+    var hidden = shadowRoot.querySelector('#dinav-passport');
+    var label = shadowRoot.querySelector('#dinav-passport-label');
+    hidden.value = iso3;
+    var c = getCountryByIso3(iso3);
+    if (c) {
+      label.innerHTML = '<img class="dinav-flag" src="' + flagUrl(c.code, 16) + '" alt="" /> ' + c.name;
+    } else {
+      label.textContent = iso3 || 'Select passport';
+    }
+    if (!silent) {
+      renderVisaPills(iso3);
+    }
+  }
+
+  function renderVisaPills(passportIso3) {
+    if (!shadowRoot) return;
+    var container = shadowRoot.querySelector('#dinav-visa-pills');
+    var hiddenInput = shadowRoot.querySelector('#dinav-visa');
+    if (!container) return;
+    container.innerHTML = '';
+    var filtered = getFilteredVisaOptions(passportIso3 || '');
+    var currentVisa = hiddenInput ? hiddenInput.value : '';
+
+    // "None" pill
+    var nonePill = document.createElement('button');
+    nonePill.className = 'dinav-visa-pill' + (!currentVisa ? ' active' : '');
+    nonePill.textContent = 'None';
+    nonePill.addEventListener('click', function () {
+      hiddenInput.value = '';
+      var all = container.querySelectorAll('.dinav-visa-pill');
+      for (var i = 0; i < all.length; i++) all[i].classList.remove('active');
+      nonePill.classList.add('active');
+    });
+    container.appendChild(nonePill);
+
+    for (var i = 0; i < filtered.length; i++) {
+      (function (v) {
+        var pill = document.createElement('button');
+        pill.className = 'dinav-visa-pill' + (currentVisa === v.visaId ? ' active' : '');
+        pill.setAttribute('data-visa', v.visaId);
+        pill.innerHTML = '<img class="dinav-flag" src="' + flagUrl(v.iso2, 14) + '" alt="" /> ' + v.name;
+        pill.addEventListener('click', function () {
+          var wasActive = pill.classList.contains('active');
+          var all = container.querySelectorAll('.dinav-visa-pill');
+          for (var j = 0; j < all.length; j++) all[j].classList.remove('active');
+          if (wasActive) {
+            // Deselect — go back to None
+            hiddenInput.value = '';
+            nonePill.classList.add('active');
+          } else {
+            hiddenInput.value = v.visaId;
+            pill.classList.add('active');
+          }
+        });
+        container.appendChild(pill);
+      })(filtered[i]);
+    }
+
+    if (filtered.length === 0 && passportIso3) {
+      var msg = document.createElement('span');
+      msg.className = 'dinav-visa-empty';
+      msg.textContent = 'No door-opener visas for this passport';
+      container.appendChild(msg);
+    }
   }
 
   function closeOverlay() {
@@ -252,20 +408,10 @@
     }
   }
 
-  function updateVisaOptions(passportIso3) {
-    var visaSel = shadowRoot.querySelector('#dinav-visa');
-    if (!visaSel) return;
-    var currentVal = visaSel.value;
-    var filtered = getFilteredVisaOptions(passportIso3);
-    visaSel.innerHTML = '<option value="">None</option>';
-    for (var i = 0; i < filtered.length; i++) {
-      var v = filtered[i];
-      var opt = document.createElement('option');
-      opt.value = v.visaId;
-      opt.textContent = v.name;
-      visaSel.appendChild(opt);
-    }
-    visaSel.value = currentVal;
+
+  function flagUrl(iso2, size) {
+    size = size || 20;
+    return 'https://flagcdn.com/' + (size * 2) + 'x' + Math.round(size * 1.5) + '/' + iso2.toLowerCase() + '.png';
   }
 
   function buildOverlayHTML(parsed) {
@@ -292,23 +438,9 @@
         + '</div>';
     }
 
-    // Build passport options
-    var passportOpts = '<option value="">Select passport</option>';
-    for (var i = 0; i < DINAV_COUNTRIES.length; i++) {
-      var c = DINAV_COUNTRIES[i];
-      passportOpts += '<option value="' + c.iso3 + '">' + c.name + '</option>';
-    }
-
-    // Build visa options (will be filtered on passport change)
-    var visaOpts = '<option value="">None</option>';
-    for (var j = 0; j < DINAV_DOOR_OPENER_VISAS.length; j++) {
-      var v = DINAV_DOOR_OPENER_VISAS[j];
-      visaOpts += '<option value="' + v.visaId + '">' + v.name + '</option>';
-    }
-
     return ''
       + '<div class="dinav-header">'
-      + '  <span class="dinav-logo">Do I Need A Visa?</span>'
+      + '  <span class="dinav-logo">do<span class="dinav-logo-accent">i</span>need<span class="dinav-logo-accent">a</span>visa</span>'
       + '  <div style="display:flex;align-items:center;gap:6px">'
       + '    <div id="dinav-theme-toggle" class="dinav-theme-toggle"></div>'
       + '    <button id="dinav-close" class="dinav-close-btn">&times;</button>'
@@ -317,13 +449,26 @@
       + '<div class="dinav-body">'
       + '  <div class="dinav-flights">' + flightTags + '</div>'
       + '  <div class="dinav-form">'
+      // Passport — custom dropdown with search + flags
       + '    <div class="dinav-field">'
       + '      <label>Passport</label>'
-      + '      <select id="dinav-passport">' + passportOpts + '</select>'
+      + '      <input type="hidden" id="dinav-passport" value="" />'
+      + '      <div class="dinav-custom-select" id="dinav-passport-dropdown">'
+      + '        <div class="dinav-select-trigger" id="dinav-passport-trigger">'
+      + '          <span class="dinav-select-value" id="dinav-passport-label">Select passport</span>'
+      + '          <span class="dinav-select-arrow">&#9662;</span>'
+      + '        </div>'
+      + '        <div class="dinav-select-menu" id="dinav-passport-menu">'
+      + '          <input type="text" class="dinav-select-search" id="dinav-passport-search" placeholder="Search countries..." />'
+      + '          <div class="dinav-select-list" id="dinav-passport-list"></div>'
+      + '        </div>'
+      + '      </div>'
       + '    </div>'
+      // Visa — pill buttons with flags
       + '    <div class="dinav-field">'
       + '      <label>Visa held</label>'
-      + '      <select id="dinav-visa">' + visaOpts + '</select>'
+      + '      <input type="hidden" id="dinav-visa" value="" />'
+      + '      <div class="dinav-visa-pills" id="dinav-visa-pills"></div>'
       + '    </div>'
       + '    <button id="dinav-check" class="dinav-btn-primary">Check Visa</button>'
       + '  </div>'
@@ -612,12 +757,16 @@
 
   function getOverlayCSS() {
     var t = currentTheme;
+    var isDark = currentThemeId !== 'light';
+    var accentSoft = isDark ? 'rgba(56,189,248,0.08)' : (t.accent + '12');
+    var accentMed = isDark ? 'rgba(56,189,248,0.12)' : (t.accent + '1A');
     return ''
+      + '@import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700;800&display=swap");'
       + '*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }'
       + '.dinav-overlay {'
       + '  position: fixed; top: 0; right: 0; width: 380px; height: 100vh;'
       + '  background: ' + t.pageBg + '; color: ' + t.textPrimary + ';'
-      + '  font-family: "Google Sans", Roboto, Arial, sans-serif; font-size: 14px;'
+      + '  font-family: "DM Mono", "SF Mono", "Fira Code", monospace; font-size: 13px;'
       + '  display: flex; flex-direction: column;'
       + '  box-shadow: -4px 0 20px rgba(0,0,0,0.3);'
       + '  overflow-y: auto;'
@@ -627,7 +776,8 @@
       + '  padding: 16px 20px; border-bottom: 1px solid ' + t.border + ';'
       + '  background: ' + t.headerBg + ';'
       + '}'
-      + '.dinav-logo { font-size: 16px; font-weight: 700; color: ' + t.accent + '; }'
+      + '.dinav-logo { font-family: "Syne", sans-serif; font-size: 16px; font-weight: 700; color: ' + t.textPrimary + '; letter-spacing: -0.02em; }'
+      + '.dinav-logo-accent { color: ' + t.accent + '; }'
       + '.dinav-theme-toggle { display: flex; }'
       + '.dinav-theme-btn {'
       + '  all: unset; cursor: pointer; width: 28px; height: 28px;'
@@ -638,33 +788,86 @@
       + '.dinav-theme-btn:hover { color: ' + t.textPrimary + '; }'
       + '.dinav-close-btn {'
       + '  background: none; border: none; color: ' + t.textDim + '; font-size: 22px;'
-      + '  cursor: pointer; padding: 4px 8px; border-radius: 4px;'
+      + '  cursor: pointer; padding: 4px 8px; border-radius: 4px; font-family: inherit;'
       + '}'
       + '.dinav-close-btn:hover { color: ' + t.textPrimary + '; background: ' + t.hoverBg + '; }'
       + '.dinav-body { padding: 16px 20px; flex: 1; }'
       + '.dinav-flights { margin-bottom: 16px; }'
       + '.dinav-flight-tag {'
       + '  background: ' + t.cardBg + '; border-radius: 8px; padding: 8px 12px;'
-      + '  margin-bottom: 6px; font-size: 13px; line-height: 1.5;'
+      + '  margin-bottom: 6px; font-size: 12px; line-height: 1.5;'
       + '}'
-      + '.dinav-slice-label { color: ' + t.textDim + '; font-size: 11px; text-transform: uppercase; margin-right: 4px; }'
-      + '.dinav-date { color: ' + t.accent + '; font-size: 12px; margin-left: 6px; }'
+      + '.dinav-slice-label { color: ' + t.textDim + '; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; margin-right: 4px; }'
+      + '.dinav-date { color: ' + t.accent + '; font-size: 11px; margin-left: 6px; }'
       + '.dinav-form { margin-bottom: 16px; }'
-      + '.dinav-field { margin-bottom: 12px; }'
+      + '.dinav-field { margin-bottom: 14px; }'
       + '.dinav-field label {'
-      + '  display: block; font-size: 12px; color: ' + t.textDim + ';'
-      + '  margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px;'
+      + '  display: block; font-size: 10px; color: ' + t.textDim + ';'
+      + '  margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.12em;'
       + '}'
-      + '.dinav-field select {'
-      + '  width: 100%; padding: 8px 12px; border-radius: 8px;'
-      + '  border: 1px solid ' + t.border + '; background: ' + t.inputBg + '; color: ' + t.textPrimary + ';'
-      + '  font-size: 14px; font-family: inherit; outline: none;'
+      // Flag images
+      + '.dinav-flag { width: 16px; height: 12px; border-radius: 2px; object-fit: cover; vertical-align: middle; flex-shrink: 0; }'
+      // Custom passport dropdown
+      + '.dinav-custom-select { position: relative; }'
+      + '.dinav-select-trigger {'
+      + '  display: flex; align-items: center; justify-content: space-between; gap: 8px;'
+      + '  padding: 10px 14px; border-radius: 10px;'
+      + '  border: 1px solid ' + t.border + '; background: ' + t.cardBg + ';'
+      + '  cursor: pointer; font-family: inherit; font-size: 13px; color: ' + t.textPrimary + ';'
+      + '  transition: border-color 0.2s;'
       + '}'
-      + '.dinav-field select:focus { border-color: ' + t.accent + '; }'
+      + '.dinav-select-trigger:hover { border-color: ' + t.accent + '; }'
+      + '.dinav-select-value { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }'
+      + '.dinav-select-arrow { color: ' + t.textDim + '; font-size: 10px; flex-shrink: 0; }'
+      + '.dinav-select-menu {'
+      + '  display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0;'
+      + '  background: ' + t.cardBg + '; border: 1px solid ' + t.border + '; border-radius: 10px;'
+      + '  z-index: 10; overflow: hidden;'
+      + '  box-shadow: 0 8px 24px rgba(0,0,0,0.25);'
+      + '}'
+      + '.dinav-select-menu.open { display: block; }'
+      + '.dinav-select-search {'
+      + '  width: 100%; padding: 10px 14px; border: none; border-bottom: 1px solid ' + t.border + ';'
+      + '  background: transparent; color: ' + t.textPrimary + '; font-size: 13px;'
+      + '  font-family: inherit; outline: none;'
+      + '}'
+      + '.dinav-select-search::placeholder { color: ' + t.textDim + '; }'
+      + '.dinav-select-list { max-height: 200px; overflow-y: auto; }'
+      + '.dinav-select-list::-webkit-scrollbar { width: 6px; }'
+      + '.dinav-select-list::-webkit-scrollbar-track { background: transparent; }'
+      + '.dinav-select-list::-webkit-scrollbar-thumb { background: ' + t.border + '; border-radius: 3px; }'
+      + '.dinav-select-row {'
+      + '  display: flex; align-items: center; gap: 8px; padding: 8px 14px;'
+      + '  cursor: pointer; font-size: 13px; color: ' + t.textPrimary + ';'
+      + '  transition: background 0.15s;'
+      + '}'
+      + '.dinav-select-row:hover { background: ' + t.hoverBg + '; }'
+      + '.dinav-select-row.selected { background: ' + accentSoft + '; }'
+      + '.dinav-select-group-label {'
+      + '  padding: 6px 14px; font-size: 9px; color: ' + t.textDim + ';'
+      + '  letter-spacing: 0.1em; text-transform: uppercase;'
+      + '}'
+      + '.dinav-select-divider { height: 1px; background: ' + t.border + '; margin: 2px 0; }'
+      // Visa pills
+      + '.dinav-visa-pills { display: flex; flex-wrap: wrap; gap: 8px; }'
+      + '.dinav-visa-pill {'
+      + '  all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;'
+      + '  padding: 8px 14px; border-radius: 20px; font-size: 12px;'
+      + '  font-family: inherit;'
+      + '  border: 1px solid ' + t.border + '; background: transparent;'
+      + '  color: ' + t.textSecondary + '; transition: all 0.2s;'
+      + '}'
+      + '.dinav-visa-pill:hover { border-color: ' + t.accent + '; color: ' + t.textPrimary + '; }'
+      + '.dinav-visa-pill.active {'
+      + '  border-color: ' + t.accent + '; background: ' + accentMed + ';'
+      + '  color: ' + t.accent + ';'
+      + '}'
+      + '.dinav-visa-empty { font-size: 12px; color: ' + t.textDim + '; }'
+      // Primary button
       + '.dinav-btn-primary {'
-      + '  width: 100%; padding: 10px; border: none; border-radius: 10px;'
-      + '  background: ' + t.accent + '; color: #fff; font-size: 14px; font-weight: 600;'
-      + '  cursor: pointer; font-family: inherit;'
+      + '  width: 100%; padding: 12px; border: none; border-radius: 10px;'
+      + '  background: ' + t.accent + '; color: #fff; font-size: 13px; font-weight: 600;'
+      + '  cursor: pointer; font-family: "Syne", sans-serif; letter-spacing: -0.01em;'
       + '}'
       + '.dinav-btn-primary:hover { opacity: 0.9; }'
       + '.dinav-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }'
@@ -689,7 +892,7 @@
       + '.dinav-slice-result.dinav-verdict-nogo, .dinav-slice-result.dinav-verdict-no-go { border-left-color: #ff5252; }'
       + '.dinav-slice-header {'
       + '  display: flex; justify-content: space-between; align-items: center;'
-      + '  margin-bottom: 8px;'
+      + '  margin-bottom: 8px; font-family: "Syne", sans-serif;'
       + '}'
       + '.dinav-verdict-badge {'
       + '  font-size: 11px; font-weight: 700; padding: 2px 8px;'
@@ -698,12 +901,12 @@
       + '.dinav-verdict-go .dinav-verdict-badge { color: #4caf50; }'
       + '.dinav-verdict-caution .dinav-verdict-badge { color: #ffc107; }'
       + '.dinav-verdict-nogo .dinav-verdict-badge, .dinav-verdict-no-go .dinav-verdict-badge { color: #ff5252; }'
-      + '.dinav-section { font-size: 13px; color: ' + t.textSecondary + '; margin-top: 6px; line-height: 1.5; }'
+      + '.dinav-section { font-size: 12px; color: ' + t.textSecondary + '; margin-top: 6px; line-height: 1.6; }'
       + '.dinav-section-title { color: ' + t.accent + '; font-weight: 600; margin-right: 6px; }'
       + '.dinav-actions { margin-top: 12px; }'
       + '.dinav-btn-google {'
       + '  width: 100%; padding: 10px; border: 1px solid ' + t.border + '; border-radius: 10px;'
-      + '  background: ' + t.cardBg + '; color: ' + t.textPrimary + '; font-size: 14px;'
+      + '  background: ' + t.cardBg + '; color: ' + t.textPrimary + '; font-size: 13px;'
       + '  cursor: pointer; font-family: inherit;'
       + '}'
       + '.dinav-btn-google:hover { border-color: ' + t.accent + '; }';
