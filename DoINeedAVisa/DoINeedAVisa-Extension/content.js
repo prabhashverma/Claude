@@ -8,30 +8,31 @@
   var OVERLAY_ID = 'dinav-overlay-root';
   var DEBOUNCE_MS = 600;
 
+  // Dark themes match Google Flights dark mode (Material Design dark)
   var EXTENSION_THEMES = {
     black: {
-      pageBg: '#0A0A0A', cardBg: '#161616', headerBg: '#0E0E0E',
-      border: '#2A2A2A', textPrimary: '#F5F5F5', textSecondary: '#A3A3A3',
-      textDim: '#666666', accent: '#38BDF8', inputBg: 'rgba(255,255,255,0.06)',
-      pillBg: 'rgba(255,255,255,0.05)', hoverBg: 'rgba(255,255,255,0.06)',
-      ctaColor: '#38BDF8', ctaBg: 'rgba(56,189,248,0.12)', ctaBorder: '#38BDF8',
-      ctaHover: 'rgba(56,189,248,0.2)',
+      pageBg: '#131314', cardBg: '#1f1f1f', headerBg: '#18181a',
+      border: '#3c4043', textPrimary: '#e8eaed', textSecondary: '#9aa0a6',
+      textDim: '#5f6368', accent: '#8ab4f8', inputBg: '#303134',
+      pillBg: 'rgba(255,255,255,0.05)', hoverBg: 'rgba(255,255,255,0.08)',
+      ctaColor: '#8ab4f8', ctaBg: 'rgba(138,180,248,0.12)', ctaBorder: '#8ab4f8',
+      ctaHover: 'rgba(138,180,248,0.2)',
     },
     blue: {
-      pageBg: '#0F172A', cardBg: '#1E293B', headerBg: '#0D1424',
-      border: '#334155', textPrimary: '#F1F5F9', textSecondary: '#94A3B8',
-      textDim: '#64748B', accent: '#38BDF8', inputBg: 'rgba(255,255,255,0.06)',
-      pillBg: 'rgba(255,255,255,0.04)', hoverBg: 'rgba(255,255,255,0.06)',
-      ctaColor: '#38BDF8', ctaBg: 'rgba(56,189,248,0.12)', ctaBorder: '#38BDF8',
-      ctaHover: 'rgba(56,189,248,0.2)',
+      pageBg: '#202124', cardBg: '#303134', headerBg: '#28292c',
+      border: '#3c4043', textPrimary: '#e8eaed', textSecondary: '#9aa0a6',
+      textDim: '#5f6368', accent: '#8ab4f8', inputBg: '#303134',
+      pillBg: 'rgba(255,255,255,0.05)', hoverBg: 'rgba(255,255,255,0.08)',
+      ctaColor: '#8ab4f8', ctaBg: 'rgba(138,180,248,0.12)', ctaBorder: '#8ab4f8',
+      ctaHover: 'rgba(138,180,248,0.2)',
     },
     light: {
-      pageBg: '#F7F6F3', cardBg: '#FFFFFF', headerBg: '#EDECE9',
-      border: '#E5E3DF', textPrimary: '#1C1C1C', textSecondary: '#6B6B6B',
-      textDim: '#999999', accent: '#2563EB', inputBg: 'rgba(0,0,0,0.04)',
-      pillBg: 'rgba(0,0,0,0.04)', hoverBg: 'rgba(0,0,0,0.04)',
-      ctaColor: '#2563EB', ctaBg: 'rgba(37,99,235,0.08)', ctaBorder: '#2563EB',
-      ctaHover: 'rgba(37,99,235,0.15)',
+      pageBg: '#FFFFFF', cardBg: '#F1F3F4', headerBg: '#F8F9FA',
+      border: '#DADCE0', textPrimary: '#202124', textSecondary: '#5f6368',
+      textDim: '#80868b', accent: '#1a73e8', inputBg: '#F1F3F4',
+      pillBg: 'rgba(0,0,0,0.04)', hoverBg: 'rgba(0,0,0,0.06)',
+      ctaColor: '#1a73e8', ctaBg: 'rgba(26,115,232,0.08)', ctaBorder: '#1a73e8',
+      ctaHover: 'rgba(26,115,232,0.15)',
     }
   };
 
