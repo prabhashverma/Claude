@@ -216,7 +216,8 @@
     wrapper.setAttribute(CTA_ATTR, 'true');
     wrapper.style.cssText = ''
       + 'display:flex; align-items:center; padding:16px 20px; cursor:pointer;'
-      + 'border-top:1px solid var(--gm3-sys-color-outline-variant, #dadce0);'
+      + 'border:1px solid var(--gm3-sys-color-outline-variant, #dadce0); border-radius:12px;'
+      + 'margin:0 0 12px 0;'
       + 'font-family:"Google Sans",Roboto,Arial,sans-serif;'
       + 'transition:background 0.15s;';
 
