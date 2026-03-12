@@ -1,0 +1,610 @@
+// DoINeedAVisa Chrome Extension — Content Script
+// Injects CTA on Google Flights, shows visa check overlay with SSE streaming
+
+(function () {
+  'use strict';
+
+  var CTA_ATTR = 'data-dinav-cta';
+  var OVERLAY_ID = 'dinav-overlay-root';
+  var DEBOUNCE_MS = 600;
+
+  var lastUrl = location.href;
+  var debounceTimer = null;
+  var overlayHost = null;
+  var shadowRoot = null;
+  var currentPort = null;
+
+  // ── Helpers ──
+
+  function getCountryName(iso3) {
+    var c = getCountryByIso3(iso3);
+    return c ? c.name : iso3;
+  }
+
+  function iso3ToIso2(iso3) {
+    var c = getCountryByIso3(iso3);
+    return c ? c.code : '';
+  }
+
+  // ── SPA Navigation Detection ──
+
+  chrome.runtime.onMessage.addListener(function (msg) {
+    if (msg.type === 'URL_CHANGED') {
+      onUrlChange();
+    }
+  });
+
+  var origPushState = history.pushState;
+  var origReplaceState = history.replaceState;
+  history.pushState = function () {
+    origPushState.apply(this, arguments);
+    onUrlChange();
+  };
+  history.replaceState = function () {
+    origReplaceState.apply(this, arguments);
+    onUrlChange();
+  };
+  window.addEventListener('popstate', onUrlChange);
+
+  var observer = new MutationObserver(function () {
+    if (location.href !== lastUrl) {
+      onUrlChange();
+    } else {
+      debouncedInject();
+    }
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+
+  function onUrlChange() {
+    lastUrl = location.href;
+    debouncedInject();
+  }
+
+  function debouncedInject() {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(tryInjectCTA, DEBOUNCE_MS);
+  }
+
+  // ── CTA Injection ──
+
+  function hasTfsParam() {
+    try {
+      return new URL(location.href).searchParams.has('tfs');
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function tryInjectCTA() {
+    if (!hasTfsParam()) {
+      removeCTA();
+      return;
+    }
+    if (document.querySelector('[' + CTA_ATTR + ']')) return;
+
+    var anchor = findBookAnchor();
+    if (anchor) {
+      var btn = createCTAButton(false);
+      anchor.parentNode.insertBefore(btn, anchor.nextSibling);
+    } else {
+      var floating = createCTAButton(true);
+      document.body.appendChild(floating);
+    }
+  }
+
+  function findBookAnchor() {
+    // Strategy 1: buttons/links containing "Book" text near price elements
+    var allButtons = document.querySelectorAll('button, a[role="link"], a[href]');
+    for (var i = 0; i < allButtons.length; i++) {
+      var el = allButtons[i];
+      var text = (el.textContent || '').trim();
+      if (/^Book(\s|$)/i.test(text) && el.offsetParent !== null) {
+        return el;
+      }
+    }
+    // Strategy 2: look for the main booking action area
+    var bookingLinks = document.querySelectorAll('a[href*="book"], a[data-ved]');
+    for (var j = 0; j < bookingLinks.length; j++) {
+      if (bookingLinks[j].offsetParent !== null) {
+        return bookingLinks[j];
+      }
+    }
+    return null;
+  }
+
+  function createCTAButton(floating) {
+    var btn = document.createElement('button');
+    btn.setAttribute(CTA_ATTR, 'true');
+    btn.className = 'dinav-cta-btn' + (floating ? ' dinav-cta-floating' : '');
+    btn.textContent = 'Visa Check';
+    btn.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      openOverlay();
+    });
+    return btn;
+  }
+
+  function removeCTA() {
+    var existing = document.querySelectorAll('[' + CTA_ATTR + ']');
+    for (var i = 0; i < existing.length; i++) {
+      existing[i].remove();
+    }
+  }
+
+  // ── Overlay ──
+
+  function openOverlay() {
+    if (document.getElementById(OVERLAY_ID)) {
+      closeOverlay();
+      return;
+    }
+
+    var parsed;
+    try {
+      parsed = parseGoogleFlightsUrl(location.href);
+    } catch (err) {
+      alert('Could not parse flight data: ' + err.message);
+      return;
+    }
+
+    overlayHost = document.createElement('div');
+    overlayHost.id = OVERLAY_ID;
+    overlayHost.style.cssText = 'position:fixed;top:0;right:0;bottom:0;z-index:99999;pointer-events:none;';
+    shadowRoot = overlayHost.attachShadow({ mode: 'closed' });
+
+    var style = document.createElement('style');
+    style.textContent = getOverlayCSS();
+    shadowRoot.appendChild(style);
+
+    var container = document.createElement('div');
+    container.className = 'dinav-overlay';
+    container.style.pointerEvents = 'auto';
+
+    container.innerHTML = buildOverlayHTML(parsed);
+    shadowRoot.appendChild(container);
+    document.body.appendChild(overlayHost);
+
+    // Load saved preferences
+    chrome.storage.local.get(['dinav_passport', 'dinav_visa'], function (data) {
+      var passportSel = shadowRoot.querySelector('#dinav-passport');
+      var visaSel = shadowRoot.querySelector('#dinav-visa');
+      if (data.dinav_passport && passportSel) {
+        passportSel.value = data.dinav_passport;
+        updateVisaOptions(passportSel.value);
+      }
+      if (data.dinav_visa && visaSel) {
+        visaSel.value = data.dinav_visa;
+      }
+    });
+
+    // Event listeners
+    shadowRoot.querySelector('#dinav-close').addEventListener('click', closeOverlay);
+    shadowRoot.querySelector('#dinav-passport').addEventListener('change', function () {
+      updateVisaOptions(this.value);
+    });
+    shadowRoot.querySelector('#dinav-check').addEventListener('click', function () {
+      runVisaCheck(parsed);
+    });
+  }
+
+  function closeOverlay() {
+    if (overlayHost) {
+      overlayHost.remove();
+      overlayHost = null;
+      shadowRoot = null;
+    }
+    if (currentPort) {
+      try { currentPort.postMessage({ type: 'ABORT' }); } catch (e) {}
+      try { currentPort.disconnect(); } catch (e) {}
+      currentPort = null;
+    }
+  }
+
+  function updateVisaOptions(passportIso3) {
+    var visaSel = shadowRoot.querySelector('#dinav-visa');
+    if (!visaSel) return;
+    var currentVal = visaSel.value;
+    var filtered = getFilteredVisaOptions(passportIso3);
+    visaSel.innerHTML = '<option value="">None</option>';
+    for (var i = 0; i < filtered.length; i++) {
+      var v = filtered[i];
+      var opt = document.createElement('option');
+      opt.value = v.visaId;
+      opt.textContent = v.name;
+      visaSel.appendChild(opt);
+    }
+    visaSel.value = currentVal;
+  }
+
+  function buildOverlayHTML(parsed) {
+    // Build flight tags
+    var flightTags = '';
+    for (var s = 0; s < parsed.slices.length; s++) {
+      var slice = parsed.slices[s];
+      var route = [];
+      for (var f = 0; f < slice.flights.length; f++) {
+        if (f === 0) route.push(slice.flights[f].departure);
+        route.push(slice.flights[f].arrival);
+      }
+      var airlineInfo = '';
+      if (slice.flights[0] && slice.flights[0].airline) {
+        airlineInfo = ' (' + slice.flights[0].airline + (slice.flights[0].flightNum || '') + ')';
+      }
+      var dateInfo = '';
+      if (slice.flights[0] && slice.flights[0].date) {
+        dateInfo = ' <span class="dinav-date">' + slice.flights[0].date + '</span>';
+      }
+      flightTags += '<div class="dinav-flight-tag">'
+        + '<span class="dinav-slice-label">Slice ' + (s + 1) + ':</span> '
+        + route.join(' &rarr; ') + airlineInfo + dateInfo
+        + '</div>';
+    }
+
+    // Build passport options
+    var passportOpts = '<option value="">Select passport</option>';
+    for (var i = 0; i < DINAV_COUNTRIES.length; i++) {
+      var c = DINAV_COUNTRIES[i];
+      passportOpts += '<option value="' + c.iso3 + '">' + c.name + '</option>';
+    }
+
+    // Build visa options (will be filtered on passport change)
+    var visaOpts = '<option value="">None</option>';
+    for (var j = 0; j < DINAV_DOOR_OPENER_VISAS.length; j++) {
+      var v = DINAV_DOOR_OPENER_VISAS[j];
+      visaOpts += '<option value="' + v.visaId + '">' + v.name + '</option>';
+    }
+
+    return ''
+      + '<div class="dinav-header">'
+      + '  <span class="dinav-logo">Do I Need A Visa?</span>'
+      + '  <button id="dinav-close" class="dinav-close-btn">&times;</button>'
+      + '</div>'
+      + '<div class="dinav-body">'
+      + '  <div class="dinav-flights">' + flightTags + '</div>'
+      + '  <div class="dinav-form">'
+      + '    <div class="dinav-field">'
+      + '      <label>Passport</label>'
+      + '      <select id="dinav-passport">' + passportOpts + '</select>'
+      + '    </div>'
+      + '    <div class="dinav-field">'
+      + '      <label>Visa held</label>'
+      + '      <select id="dinav-visa">' + visaOpts + '</select>'
+      + '    </div>'
+      + '    <button id="dinav-check" class="dinav-btn-primary">Check Visa</button>'
+      + '  </div>'
+      + '  <div id="dinav-results" class="dinav-results" style="display:none">'
+      + '    <div id="dinav-status" class="dinav-status"></div>'
+      + '    <div id="dinav-slices" class="dinav-slices"></div>'
+      + '    <div id="dinav-actions" class="dinav-actions" style="display:none"></div>'
+      + '  </div>'
+      + '</div>';
+  }
+
+  // ── Visa Check (API + SSE) ──
+
+  function runVisaCheck(parsed) {
+    var passportSel = shadowRoot.querySelector('#dinav-passport');
+    var visaSel = shadowRoot.querySelector('#dinav-visa');
+    var passportIso3 = passportSel ? passportSel.value : '';
+    var visaId = visaSel ? visaSel.value : '';
+
+    if (!passportIso3) {
+      alert('Please select your passport country.');
+      return;
+    }
+
+    // Save preferences
+    chrome.storage.local.set({ dinav_passport: passportIso3, dinav_visa: visaId });
+
+    // Build payload
+    var payload = buildPayload(parsed, passportIso3, visaId);
+
+    // Show results area
+    var resultsDiv = shadowRoot.querySelector('#dinav-results');
+    var statusDiv = shadowRoot.querySelector('#dinav-status');
+    var slicesDiv = shadowRoot.querySelector('#dinav-slices');
+    var actionsDiv = shadowRoot.querySelector('#dinav-actions');
+    resultsDiv.style.display = 'block';
+    statusDiv.textContent = 'Analysing your route...';
+    statusDiv.className = 'dinav-status dinav-loading';
+    slicesDiv.innerHTML = '';
+    actionsDiv.style.display = 'none';
+    actionsDiv.innerHTML = '';
+
+    // Disable check button
+    var checkBtn = shadowRoot.querySelector('#dinav-check');
+    if (checkBtn) {
+      checkBtn.disabled = true;
+      checkBtn.textContent = 'Checking...';
+    }
+
+    // Abort previous stream
+    if (currentPort) {
+      try { currentPort.postMessage({ type: 'ABORT' }); } catch (e) {}
+      try { currentPort.disconnect(); } catch (e) {}
+    }
+
+    // Open port to background for SSE streaming
+    var port = chrome.runtime.connect({ name: 'dinav-stream' });
+    currentPort = port;
+
+    port.onMessage.addListener(function (msg) {
+      if (msg.type === 'SSE_EVENT') {
+        handleSSEEvent(msg.event, msg.data, statusDiv, slicesDiv, actionsDiv, parsed, passportIso3, visaId);
+      } else if (msg.type === 'SSE_DONE') {
+        if (checkBtn) { checkBtn.disabled = false; checkBtn.textContent = 'Check Visa'; }
+      } else if (msg.type === 'SSE_ERROR') {
+        statusDiv.textContent = 'Error: ' + (msg.data || 'Connection failed');
+        statusDiv.className = 'dinav-status dinav-error';
+        if (checkBtn) { checkBtn.disabled = false; checkBtn.textContent = 'Check Visa'; }
+      }
+    });
+
+    port.onDisconnect.addListener(function () {
+      if (checkBtn) { checkBtn.disabled = false; checkBtn.textContent = 'Check Visa'; }
+    });
+
+    port.postMessage({ type: 'START_STREAM', payload: payload });
+  }
+
+  function buildPayload(parsed, passportIso3, visaId) {
+    var passportIso2 = iso3ToIso2(passportIso3) || passportIso3;
+    var slices = [];
+    for (var i = 0; i < parsed.slices.length; i++) {
+      var sl = parsed.slices[i];
+      var segments = [];
+      for (var j = 0; j < sl.flights.length; j++) {
+        var f = sl.flights[j];
+        segments.push({
+          id: 's' + i + '_leg_' + (j + 1),
+          departure_airport: f.departure,
+          arrival_airport: f.arrival,
+          airline: f.airline || '',
+          flight_number: (f.airline || '') + (f.flightNum || ''),
+          departure_time: f.date ? f.date + 'T00:00:00' : '',
+          arrival_time: ''
+        });
+      }
+      var label = sl.flights.length > 0
+        ? sl.flights[0].departure + ' to ' + sl.flights[sl.flights.length - 1].arrival
+        : 'Slice ' + (i + 1);
+      slices.push({ id: 's' + i, label: label, segments: segments });
+    }
+    return {
+      passengers: [{
+        nationality: passportIso2,
+        visas: visaId ? [visaId] : []
+      }],
+      slices: slices
+    };
+  }
+
+  function handleSSEEvent(eventType, dataStr, statusDiv, slicesDiv, actionsDiv, parsed, passportIso3, visaId) {
+    var data;
+    try {
+      data = JSON.parse(dataStr);
+    } catch (e) {
+      data = { message: dataStr };
+    }
+
+    switch (eventType) {
+      case 'started':
+        statusDiv.textContent = 'Connected, analysing...';
+        break;
+
+      case 'status':
+        statusDiv.textContent = data.message || data.status || 'Processing...';
+        break;
+
+      case 'reasoning':
+        // Show thinking indicator
+        statusDiv.textContent = 'Thinking...';
+        break;
+
+      case 'slice_done':
+        renderSliceResult(slicesDiv, data);
+        statusDiv.textContent = 'Checking next segment...';
+        break;
+
+      case 'done':
+        statusDiv.className = 'dinav-status';
+        var verdict = '';
+        if (data.structured && data.structured.global_verdict) {
+          verdict = data.structured.global_verdict;
+        } else if (data.response) {
+          verdict = extractVerdict(data.response);
+        }
+        renderFinalVerdict(statusDiv, verdict);
+        renderGoogleSearchButton(actionsDiv, parsed, passportIso3, visaId);
+        actionsDiv.style.display = 'block';
+        break;
+
+      case 'error':
+        statusDiv.textContent = 'Error: ' + (data.message || 'Unknown error');
+        statusDiv.className = 'dinav-status dinav-error';
+        break;
+    }
+  }
+
+  function renderSliceResult(container, data) {
+    var div = document.createElement('div');
+    var verdictClass = 'dinav-verdict-' + (data.status || 'unknown').toLowerCase();
+    div.className = 'dinav-slice-result ' + verdictClass;
+
+    var header = '<div class="dinav-slice-header">'
+      + '<strong>' + (data.slice_label || 'Segment') + '</strong>'
+      + '<span class="dinav-verdict-badge">' + (data.status || '').toUpperCase() + '</span>'
+      + '</div>';
+
+    var sections = '';
+    if (data.sections && data.sections.length) {
+      for (var i = 0; i < data.sections.length; i++) {
+        var sec = data.sections[i];
+        sections += '<div class="dinav-section">'
+          + '<span class="dinav-section-title">' + (sec.title || sec.type || '') + '</span>'
+          + '<span class="dinav-section-text">' + (sec.content || sec.text || '') + '</span>'
+          + '</div>';
+      }
+    }
+    if (data.reason) {
+      sections += '<div class="dinav-section"><span class="dinav-section-text">' + data.reason + '</span></div>';
+    }
+
+    div.innerHTML = header + sections;
+    container.appendChild(div);
+  }
+
+  function renderFinalVerdict(statusDiv, verdict) {
+    var verdictLower = (verdict || '').toLowerCase();
+    var emoji = '';
+    var label = verdict || 'Analysis complete';
+    if (verdictLower === 'go' || verdictLower === 'green') {
+      emoji = ' ';
+      statusDiv.className = 'dinav-status dinav-verdict-go';
+    } else if (verdictLower === 'caution' || verdictLower === 'yellow') {
+      emoji = ' ';
+      statusDiv.className = 'dinav-status dinav-verdict-caution';
+    } else if (verdictLower === 'no-go' || verdictLower === 'red') {
+      emoji = ' ';
+      statusDiv.className = 'dinav-status dinav-verdict-nogo';
+    }
+    statusDiv.textContent = emoji + label;
+  }
+
+  function extractVerdict(text) {
+    if (/\bGO\b/i.test(text) && !/NO.GO/i.test(text)) return 'GO';
+    if (/NO.GO/i.test(text)) return 'NO-GO';
+    if (/CAUTION/i.test(text)) return 'CAUTION';
+    return 'See details';
+  }
+
+  function renderGoogleSearchButton(container, parsed, passportIso3, visaId) {
+    var countryName = getCountryName(passportIso3);
+    var airports = [];
+    for (var i = 0; i < parsed.flights.length; i++) {
+      var f = parsed.flights[i];
+      if (airports.indexOf(f.departure) === -1) airports.push(f.departure);
+      if (airports.indexOf(f.arrival) === -1) airports.push(f.arrival);
+    }
+
+    var visaName = '';
+    if (visaId) {
+      for (var j = 0; j < DINAV_DOOR_OPENER_VISAS.length; j++) {
+        if (DINAV_DOOR_OPENER_VISAS[j].visaId === visaId) {
+          visaName = DINAV_DOOR_OPENER_VISAS[j].name;
+          break;
+        }
+      }
+    }
+
+    var query = countryName + ' passport'
+      + (visaName ? ' ' + visaName + ' visa' : '')
+      + ' ' + airports.join(' ')
+      + ' visa requirements';
+
+    var btn = document.createElement('button');
+    btn.className = 'dinav-btn-google';
+    btn.textContent = 'Google it';
+    btn.addEventListener('click', function () {
+      window.open('https://www.google.com/search?q=' + encodeURIComponent(query), '_blank');
+    });
+    container.appendChild(btn);
+  }
+
+  // ── Overlay CSS (inside Shadow DOM) ──
+
+  function getOverlayCSS() {
+    return ''
+      + '*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }'
+      + '.dinav-overlay {'
+      + '  position: fixed; top: 0; right: 0; width: 380px; height: 100vh;'
+      + '  background: #1a1a2e; color: #e0e0e0;'
+      + '  font-family: "Google Sans", Roboto, Arial, sans-serif; font-size: 14px;'
+      + '  display: flex; flex-direction: column;'
+      + '  box-shadow: -4px 0 20px rgba(0,0,0,0.4);'
+      + '  overflow-y: auto;'
+      + '}'
+      + '.dinav-header {'
+      + '  display: flex; justify-content: space-between; align-items: center;'
+      + '  padding: 16px 20px; border-bottom: 1px solid #2a2a4a;'
+      + '  background: #16162a;'
+      + '}'
+      + '.dinav-logo { font-size: 16px; font-weight: 700; color: #6c9fff; }'
+      + '.dinav-close-btn {'
+      + '  background: none; border: none; color: #888; font-size: 22px;'
+      + '  cursor: pointer; padding: 4px 8px; border-radius: 4px;'
+      + '}'
+      + '.dinav-close-btn:hover { color: #fff; background: #333; }'
+      + '.dinav-body { padding: 16px 20px; flex: 1; }'
+      + '.dinav-flights { margin-bottom: 16px; }'
+      + '.dinav-flight-tag {'
+      + '  background: #2a2a4a; border-radius: 8px; padding: 8px 12px;'
+      + '  margin-bottom: 6px; font-size: 13px; line-height: 1.5;'
+      + '}'
+      + '.dinav-slice-label { color: #888; font-size: 11px; text-transform: uppercase; margin-right: 4px; }'
+      + '.dinav-date { color: #6c9fff; font-size: 12px; margin-left: 6px; }'
+      + '.dinav-form { margin-bottom: 16px; }'
+      + '.dinav-field { margin-bottom: 12px; }'
+      + '.dinav-field label {'
+      + '  display: block; font-size: 12px; color: #888;'
+      + '  margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px;'
+      + '}'
+      + '.dinav-field select {'
+      + '  width: 100%; padding: 8px 12px; border-radius: 8px;'
+      + '  border: 1px solid #3a3a5a; background: #222244; color: #e0e0e0;'
+      + '  font-size: 14px; font-family: inherit; outline: none;'
+      + '}'
+      + '.dinav-field select:focus { border-color: #6c9fff; }'
+      + '.dinav-btn-primary {'
+      + '  width: 100%; padding: 10px; border: none; border-radius: 10px;'
+      + '  background: #1a73e8; color: #fff; font-size: 14px; font-weight: 600;'
+      + '  cursor: pointer; font-family: inherit;'
+      + '}'
+      + '.dinav-btn-primary:hover { background: #1565c0; }'
+      + '.dinav-btn-primary:disabled { background: #555; cursor: not-allowed; }'
+      + '.dinav-results { margin-top: 16px; }'
+      + '.dinav-status {'
+      + '  padding: 10px 14px; border-radius: 8px; margin-bottom: 12px;'
+      + '  background: #2a2a4a; font-size: 13px;'
+      + '}'
+      + '.dinav-loading { color: #6c9fff; }'
+      + '.dinav-error { color: #ff6b6b; background: #2a1a1a; }'
+      + '.dinav-verdict-go { color: #4caf50; background: #1a2e1a; }'
+      + '.dinav-verdict-caution { color: #ffc107; background: #2e2a1a; }'
+      + '.dinav-verdict-nogo { color: #ff5252; background: #2e1a1a; }'
+      + '.dinav-slices { }'
+      + '.dinav-slice-result {'
+      + '  border-radius: 8px; padding: 12px; margin-bottom: 10px;'
+      + '  border-left: 3px solid #555;'
+      + '  background: #222244;'
+      + '}'
+      + '.dinav-slice-result.dinav-verdict-go { border-left-color: #4caf50; }'
+      + '.dinav-slice-result.dinav-verdict-caution { border-left-color: #ffc107; }'
+      + '.dinav-slice-result.dinav-verdict-nogo,  .dinav-slice-result.dinav-verdict-no-go { border-left-color: #ff5252; }'
+      + '.dinav-slice-header {'
+      + '  display: flex; justify-content: space-between; align-items: center;'
+      + '  margin-bottom: 8px;'
+      + '}'
+      + '.dinav-verdict-badge {'
+      + '  font-size: 11px; font-weight: 700; padding: 2px 8px;'
+      + '  border-radius: 4px; text-transform: uppercase;'
+      + '}'
+      + '.dinav-verdict-go .dinav-verdict-badge { background: #1a2e1a; color: #4caf50; }'
+      + '.dinav-verdict-caution .dinav-verdict-badge { background: #2e2a1a; color: #ffc107; }'
+      + '.dinav-verdict-nogo .dinav-verdict-badge, .dinav-verdict-no-go .dinav-verdict-badge { background: #2e1a1a; color: #ff5252; }'
+      + '.dinav-section { font-size: 13px; color: #bbb; margin-top: 6px; line-height: 1.5; }'
+      + '.dinav-section-title { color: #6c9fff; font-weight: 600; margin-right: 6px; }'
+      + '.dinav-actions { margin-top: 12px; }'
+      + '.dinav-btn-google {'
+      + '  width: 100%; padding: 10px; border: 1px solid #3a3a5a; border-radius: 10px;'
+      + '  background: #222244; color: #e0e0e0; font-size: 14px;'
+      + '  cursor: pointer; font-family: inherit;'
+      + '}'
+      + '.dinav-btn-google:hover { background: #2a2a5a; border-color: #6c9fff; }';
+  }
+
+  // ── Initial injection ──
+  tryInjectCTA();
+
+})();
