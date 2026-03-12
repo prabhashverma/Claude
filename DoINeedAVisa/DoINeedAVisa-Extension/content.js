@@ -568,30 +568,38 @@
 
   // ── Theme toggle ──
 
+  var THEME_ORDER = ['black', 'blue', 'light'];
+  var THEME_LABELS = { black: 'Dark', blue: 'Blue', light: 'Light' };
+
+  // SVG icons for each theme state
+  var THEME_ICONS = {
+    // Sun icon for light mode
+    light: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>',
+    // Moon icon for blue (dark blue) mode
+    blue: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>',
+    // Half icon for black mode
+    black: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" opacity="0.4"/><path d="M21 12.79A9 9 0 1 1 11.21 3" opacity="0.4"/></svg>',
+  };
+
   function renderThemeToggle() {
     var container = shadowRoot.querySelector('#dinav-theme-toggle');
     if (!container) return;
     container.innerHTML = '';
-    var themes = [
-      { id: 'black', icon: '\u25CF', title: 'Dark' },
-      { id: 'blue', icon: '\u25C9', title: 'Blue' },
-      { id: 'light', icon: '\u25CB', title: 'Light' },
-    ];
-    themes.forEach(function (t) {
-      var btn = document.createElement('button');
-      btn.className = 'dinav-theme-btn' + (currentThemeId === t.id ? ' active' : '');
-      btn.textContent = t.icon;
-      btn.title = t.title;
-      btn.addEventListener('click', function () {
-        currentThemeId = t.id;
-        currentTheme = EXTENSION_THEMES[t.id];
-        chrome.storage.local.set({ dinav_theme: t.id });
-        updateCTATheme();
-        applyOverlayTheme();
-        renderThemeToggle();
-      });
-      container.appendChild(btn);
+    var btn = document.createElement('button');
+    btn.className = 'dinav-theme-btn';
+    btn.title = 'Theme: ' + THEME_LABELS[currentThemeId] + ' — click to switch';
+    btn.innerHTML = THEME_ICONS[currentThemeId];
+    btn.addEventListener('click', function () {
+      var idx = THEME_ORDER.indexOf(currentThemeId);
+      var nextId = THEME_ORDER[(idx + 1) % THEME_ORDER.length];
+      currentThemeId = nextId;
+      currentTheme = EXTENSION_THEMES[nextId];
+      chrome.storage.local.set({ dinav_theme: nextId });
+      updateCTATheme();
+      applyOverlayTheme();
+      renderThemeToggle();
     });
+    container.appendChild(btn);
   }
 
   function applyOverlayTheme() {
@@ -620,18 +628,14 @@
       + '  background: ' + t.headerBg + ';'
       + '}'
       + '.dinav-logo { font-size: 16px; font-weight: 700; color: ' + t.accent + '; }'
-      + '.dinav-theme-toggle { display: flex; gap: 2px; }'
+      + '.dinav-theme-toggle { display: flex; }'
       + '.dinav-theme-btn {'
-      + '  all: unset; cursor: pointer; width: 20px; height: 20px;'
+      + '  all: unset; cursor: pointer; width: 28px; height: 28px;'
       + '  display: flex; align-items: center; justify-content: center;'
-      + '  border-radius: 4px; font-size: 11px;'
-      + '  color: ' + t.textDim + '; transition: all 0.15s;'
+      + '  border-radius: 6px;'
+      + '  color: ' + t.textSecondary + '; transition: color 0.2s;'
       + '}'
       + '.dinav-theme-btn:hover { color: ' + t.textPrimary + '; }'
-      + '.dinav-theme-btn.active {'
-      + '  color: ' + t.accent + '; background: ' + t.hoverBg + ';'
-      + '  border: 1px solid ' + t.border + ';'
-      + '}'
       + '.dinav-close-btn {'
       + '  background: none; border: none; color: ' + t.textDim + '; font-size: 22px;'
       + '  cursor: pointer; padding: 4px 8px; border-radius: 4px;'
