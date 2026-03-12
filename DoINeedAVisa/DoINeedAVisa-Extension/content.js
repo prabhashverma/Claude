@@ -11,9 +11,9 @@
   // Dark themes match Google Flights dark mode (Material Design dark)
   var EXTENSION_THEMES = {
     black: {
-      pageBg: '#131314', cardBg: '#1f1f1f', headerBg: '#18181a',
-      border: '#3c4043', textPrimary: '#e8eaed', textSecondary: '#9aa0a6',
-      textDim: '#5f6368', accent: '#8ab4f8', inputBg: '#303134',
+      pageBg: '#1f1f1f', cardBg: '#28292a', headerBg: '#28292a',
+      border: '#3c4043', textPrimary: '#e3e3e3', textSecondary: '#9aa0a6',
+      textDim: '#70757a', accent: '#8ab4f8', inputBg: '#28292a',
       pillBg: 'rgba(255,255,255,0.05)', hoverBg: 'rgba(255,255,255,0.08)',
       ctaColor: '#8ab4f8', ctaBg: 'rgba(138,180,248,0.12)', ctaBorder: '#8ab4f8',
       ctaHover: 'rgba(138,180,248,0.2)',
