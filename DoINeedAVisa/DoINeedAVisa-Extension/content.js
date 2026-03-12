@@ -133,18 +133,58 @@
     }
     if (document.querySelector('[' + CTA_ATTR + ']')) return;
 
+    // Strategy 1: Insert as a booking-option row near "Booking options" header
+    var bookingRow = findBookingOptionsArea();
+    if (bookingRow) {
+      var row = createBookingRow();
+      bookingRow.parentNode.insertBefore(row, bookingRow);
+      return;
+    }
+
+    // Strategy 2: Find a "Book with" link and insert next to it
     var anchor = findBookAnchor();
     if (anchor) {
       var btn = createCTAButton(false);
       anchor.parentNode.insertBefore(btn, anchor.nextSibling);
-    } else {
-      var floating = createCTAButton(true);
-      document.body.appendChild(floating);
+      return;
     }
+
+    // Fallback: floating button
+    var floating = createCTAButton(true);
+    document.body.appendChild(floating);
+  }
+
+  function findBookingOptionsArea() {
+    // Look for "Booking options" heading text, then find the first booking row after it
+    var allHeadings = document.querySelectorAll('h2, h3, div[role="heading"], [aria-level]');
+    for (var i = 0; i < allHeadings.length; i++) {
+      var text = (allHeadings[i].textContent || '').trim();
+      if (/booking\s*options/i.test(text)) {
+        // Found the heading — find the first booking list item (the list container or first row)
+        var parent = allHeadings[i].parentElement;
+        // Walk up a bit to find the container, then look for the first list item
+        for (var p = 0; p < 4; p++) {
+          if (!parent) break;
+          // Look for the first "Book with" row within this container
+          var bookRows = parent.querySelectorAll('li, [data-ved]');
+          if (bookRows.length > 0) {
+            return bookRows[0];
+          }
+          parent = parent.parentElement;
+        }
+        // Fallback: return the heading's next sibling container
+        var next = allHeadings[i].nextElementSibling;
+        if (next) {
+          var firstChild = next.querySelector('li, [data-ved]');
+          if (firstChild) return firstChild;
+          return next.firstElementChild || next;
+        }
+      }
+    }
+    return null;
   }
 
   function findBookAnchor() {
-    // Strategy 1: buttons/links containing "Book" text near price elements
     var allButtons = document.querySelectorAll('button, a[role="link"], a[href]');
     for (var i = 0; i < allButtons.length; i++) {
       var el = allButtons[i];
@@ -153,7 +193,6 @@
         return el;
       }
     }
-    // Strategy 2: look for the main booking action area
     var bookingLinks = document.querySelectorAll('a[href*="book"], a[data-ved]');
     for (var j = 0; j < bookingLinks.length; j++) {
       if (bookingLinks[j].offsetParent !== null) {
@@ -161,6 +200,74 @@
       }
     }
     return null;
+  }
+
+  function createBookingRow() {
+    var row = document.createElement('div');
+    row.setAttribute(CTA_ATTR, 'true');
+    row.style.cssText = ''
+      + 'display:flex; align-items:center; padding:16px 24px; cursor:pointer;'
+      + 'border:1px solid var(--gm3-sys-color-outline-variant, #dadce0);'
+      + 'border-radius:12px; margin-bottom:8px; transition:background 0.15s;'
+      + 'font-family:"Google Sans",Roboto,Arial,sans-serif;';
+
+    // Logo circle
+    var logo = document.createElement('div');
+    logo.style.cssText = ''
+      + 'width:40px; height:40px; border-radius:50%;'
+      + 'background:linear-gradient(135deg,#8ab4f8,#1a73e8);'
+      + 'display:flex; align-items:center; justify-content:center;'
+      + 'font-size:18px; color:#fff; flex-shrink:0; margin-right:16px;';
+    logo.textContent = '\u2708';
+
+    // Text
+    var text = document.createElement('div');
+    text.style.cssText = 'flex:1; min-width:0;';
+    var title = document.createElement('div');
+    title.style.cssText = 'font-size:14px; font-weight:500; color:var(--gm3-sys-color-on-surface, #202124);';
+    title.textContent = 'Check with DoINeedAVisa';
+    var subtitle = document.createElement('div');
+    subtitle.style.cssText = 'font-size:12px; color:var(--gm3-sys-color-on-surface-variant, #70757a); margin-top:2px;';
+    subtitle.textContent = 'Visa, transit & layover check';
+    text.appendChild(title);
+    text.appendChild(subtitle);
+
+    // Badge
+    var badge = document.createElement('span');
+    badge.style.cssText = ''
+      + 'font-size:11px; font-weight:500; color:#1a73e8;'
+      + 'background:#e8f0fe; padding:4px 12px; border-radius:16px; margin-left:12px; white-space:nowrap;';
+    badge.textContent = 'Free';
+
+    // CTA button
+    var btn = document.createElement('button');
+    btn.style.cssText = ''
+      + 'margin-left:12px; padding:8px 20px; border-radius:20px;'
+      + 'border:1px solid var(--gm3-sys-color-outline, #747775);'
+      + 'background:transparent; color:var(--gm3-sys-color-primary, #1a73e8);'
+      + 'font-size:14px; font-weight:500; cursor:pointer;'
+      + 'font-family:"Google Sans",Roboto,Arial,sans-serif; white-space:nowrap;';
+    btn.textContent = 'Check';
+
+    row.appendChild(logo);
+    row.appendChild(text);
+    row.appendChild(badge);
+    row.appendChild(btn);
+
+    row.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      openOverlay();
+    });
+
+    row.addEventListener('mouseenter', function () {
+      row.style.background = 'var(--gm3-sys-color-surface-container-low, #f8f9fa)';
+    });
+    row.addEventListener('mouseleave', function () {
+      row.style.background = '';
+    });
+
+    return row;
   }
 
   function createCTAButton(floating) {
