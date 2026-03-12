@@ -7,6 +7,8 @@
   var CTA_ATTR = 'data-dinav-cta';
   var OVERLAY_ID = 'dinav-overlay-root';
   var DEBOUNCE_MS = 600;
+  var MAX_HISTORY = 20;
+  var searchHistory = [];
 
   // Dark themes match Google Flights dark mode (Material Design dark)
   var EXTENSION_THEMES = {
@@ -240,6 +242,9 @@
     // Theme toggle
     renderThemeToggle();
 
+    // Render search history
+    loadHistory(function () { renderHistory(); });
+
     // Event listeners
     shadowRoot.querySelector('#dinav-close').addEventListener('click', closeOverlay);
 
@@ -442,6 +447,132 @@
     }
   }
 
+  // ── Search History ──
+
+  function loadHistory(cb) {
+    chrome.storage.local.get(['dinav_history'], function (data) {
+      searchHistory = data.dinav_history || [];
+      if (cb) cb();
+    });
+  }
+
+  function saveHistory() {
+    chrome.storage.local.set({ dinav_history: searchHistory.slice(0, MAX_HISTORY) });
+  }
+
+  function addHistoryEntry(passportIso3, visaId, parsed, verdict, summary) {
+    var routes = [];
+    for (var i = 0; i < parsed.slices.length; i++) {
+      var sl = parsed.slices[i];
+      if (sl.flights.length > 0) {
+        routes.push(sl.flights[0].departure + ' \u2192 ' + sl.flights[sl.flights.length - 1].arrival);
+      }
+    }
+    var entry = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      timestamp: Date.now(),
+      passport: passportIso3,
+      visa: visaId || '',
+      route: routes.join(' | '),
+      verdict: verdict || '',
+      summary: (summary || '').slice(0, 300),
+    };
+    searchHistory.unshift(entry);
+    searchHistory = searchHistory.slice(0, MAX_HISTORY);
+    saveHistory();
+    renderHistory();
+  }
+
+  function verdictColor(v) {
+    var vl = (v || '').toLowerCase().replace(/[_-]/g, '');
+    if (vl === 'go' || vl === 'green') return '#4caf50';
+    if (vl === 'caution' || vl === 'yellow') return '#ffc107';
+    if (vl === 'nogo' || vl === 'red') return '#ff5252';
+    return currentTheme.textDim;
+  }
+
+  function renderHistory() {
+    if (!shadowRoot) return;
+    var container = shadowRoot.querySelector('#dinav-history');
+    if (!container) return;
+
+    if (searchHistory.length === 0) {
+      container.style.display = 'none';
+      return;
+    }
+    container.style.display = 'block';
+    container.innerHTML = '';
+
+    // Header row
+    var header = document.createElement('div');
+    header.className = 'dinav-history-header';
+    header.innerHTML = '<span>Search History</span>';
+    var clearBtn = document.createElement('button');
+    clearBtn.className = 'dinav-history-clear';
+    clearBtn.textContent = 'Clear all';
+    clearBtn.addEventListener('click', function () {
+      searchHistory = [];
+      saveHistory();
+      renderHistory();
+    });
+    header.appendChild(clearBtn);
+    container.appendChild(header);
+
+    // Entries
+    for (var i = 0; i < searchHistory.length; i++) {
+      (function (entry) {
+        var row = document.createElement('div');
+        row.className = 'dinav-history-entry';
+
+        var timeStr = new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        var vColor = verdictColor(entry.verdict);
+        var passportC = getCountryByIso3(entry.passport);
+        var passportFlag = passportC ? '<img class="dinav-flag" src="' + flagUrl(passportC.code, 14) + '" alt="" /> ' : '';
+        var passportLabel = passportC ? passportC.iso3 : entry.passport;
+
+        var visaHtml = '';
+        if (entry.visa) {
+          visaHtml = '<span class="dinav-history-visa">' + entry.visa.replace(/_/g, ' ') + '</span>';
+        }
+
+        row.innerHTML = ''
+          + '<div class="dinav-history-row">'
+          + '  <span class="dinav-history-time">' + timeStr + '</span>'
+          + '  <span class="dinav-history-dot" style="background:' + vColor + '"></span>'
+          + '  <span class="dinav-history-passport">' + passportFlag + passportLabel + '</span>'
+          + visaHtml
+          + '  <span class="dinav-history-route" style="color:' + vColor + '">' + (entry.route || '') + '</span>'
+          + '  <span class="dinav-history-arrow">\u25BC</span>'
+          + '</div>'
+          + '<div class="dinav-history-detail">'
+          + '  <div class="dinav-history-verdict">' + (entry.verdict || '').replace(/_/g, ' ') + '</div>'
+          + '  <div class="dinav-history-summary">' + (entry.summary || 'No summary available.') + '</div>'
+          + '</div>';
+
+        var rowHeader = row.querySelector('.dinav-history-row');
+        var detail = row.querySelector('.dinav-history-detail');
+        var arrow = row.querySelector('.dinav-history-arrow');
+        rowHeader.addEventListener('click', function () {
+          var isOpen = detail.classList.contains('open');
+          // Close all others
+          var allDetails = container.querySelectorAll('.dinav-history-detail');
+          var allArrows = container.querySelectorAll('.dinav-history-arrow');
+          for (var j = 0; j < allDetails.length; j++) {
+            allDetails[j].classList.remove('open');
+            allArrows[j].textContent = '\u25BC';
+          }
+          if (!isOpen) {
+            detail.classList.add('open');
+            arrow.textContent = '\u25B2';
+          }
+        });
+        container.appendChild(row);
+      })(searchHistory[i]);
+    }
+  }
+
+  // Load history on init
+  loadHistory();
 
   function flagUrl(iso2, size) {
     size = size || 20;
@@ -521,6 +652,7 @@
       + '    <div id="dinav-slices" class="dinav-slices"></div>'
       + '    <div id="dinav-actions" class="dinav-actions" style="display:none"></div>'
       + '  </div>'
+      + '  <div id="dinav-history" class="dinav-history" style="display:none"></div>'
       + '</div>';
   }
 
@@ -653,14 +785,19 @@
       case 'done':
         statusDiv.className = 'dinav-status';
         var verdict = '';
+        var summary = '';
         if (data.structured && data.structured.global_verdict) {
           verdict = data.structured.global_verdict;
+          summary = data.structured.overall_reasoning || '';
         } else if (data.response) {
           verdict = extractVerdict(data.response);
+          summary = data.response;
         }
         renderFinalVerdict(statusDiv, verdict);
         renderGoogleSearchButton(actionsDiv, parsed, passportIso3, visaId);
         actionsDiv.style.display = 'block';
+        // Save to search history
+        addHistoryEntry(passportIso3, visaId, parsed, verdict, summary);
         break;
 
       case 'error':
@@ -802,8 +939,8 @@
   function getOverlayCSS() {
     var t = currentTheme;
     var isDark = currentThemeId !== 'light';
-    var accentSoft = isDark ? 'rgba(56,189,248,0.08)' : (t.accent + '12');
-    var accentMed = isDark ? 'rgba(56,189,248,0.12)' : (t.accent + '1A');
+    var accentSoft = isDark ? 'rgba(138,180,248,0.08)' : (t.accent + '12');
+    var accentMed = isDark ? 'rgba(138,180,248,0.15)' : (t.accent + '1A');
     return ''
       + '@import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700;800&display=swap");'
       + '*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }'
@@ -975,7 +1112,44 @@
       + '  background: ' + t.cardBg + '; color: ' + t.textPrimary + '; font-size: 13px;'
       + '  cursor: pointer; font-family: inherit;'
       + '}'
-      + '.dinav-btn-google:hover { border-color: ' + t.accent + '; }';
+      + '.dinav-btn-google:hover { border-color: ' + t.accent + '; }'
+      // History
+      + '.dinav-history { margin-top: 24px; padding-top: 16px; border-top: 1px solid ' + t.border + '; }'
+      + '.dinav-history-header {'
+      + '  display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;'
+      + '  font-size: 10px; color: ' + t.textDim + '; text-transform: uppercase; letter-spacing: 0.1em;'
+      + '}'
+      + '.dinav-history-clear {'
+      + '  all: unset; cursor: pointer; font-size: 10px; color: ' + t.textDim + ';'
+      + '  padding: 3px 8px; border-radius: 6px; border: 1px solid ' + t.border + ';'
+      + '  font-family: inherit; transition: color 0.2s;'
+      + '}'
+      + '.dinav-history-clear:hover { color: #ff5252; }'
+      + '.dinav-history-entry { margin-bottom: 4px; }'
+      + '.dinav-history-row {'
+      + '  display: flex; align-items: center; gap: 8px; padding: 8px 12px;'
+      + '  background: ' + t.cardBg + '; border: 1px solid ' + t.border + '; border-radius: 8px;'
+      + '  cursor: pointer; transition: background 0.15s; flex-wrap: wrap;'
+      + '}'
+      + '.dinav-history-row:hover { background: ' + t.hoverBg + '; }'
+      + '.dinav-history-time { font-size: 10px; color: ' + t.textDim + '; flex-shrink: 0; min-width: 40px; }'
+      + '.dinav-history-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }'
+      + '.dinav-history-passport { font-size: 11px; color: ' + t.textPrimary + '; display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }'
+      + '.dinav-history-visa {'
+      + '  font-size: 10px; color: ' + t.accent + '; background: ' + accentSoft + ';'
+      + '  padding: 1px 6px; border-radius: 4px; flex-shrink: 0;'
+      + '}'
+      + '.dinav-history-route { font-size: 11px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }'
+      + '.dinav-history-arrow { font-size: 9px; color: ' + t.textDim + '; flex-shrink: 0; margin-left: auto; }'
+      + '.dinav-history-detail {'
+      + '  display: none; border: 1px solid ' + t.border + '; border-top: none;'
+      + '  border-radius: 0 0 8px 8px; padding: 10px 12px; background: ' + t.cardBg + ';'
+      + '}'
+      + '.dinav-history-detail.open { display: block; }'
+      + '.dinav-history-detail.open + .dinav-history-row,'
+      + '.dinav-history-entry:has(.dinav-history-detail.open) .dinav-history-row { border-radius: 8px 8px 0 0; }'
+      + '.dinav-history-verdict { font-size: 10px; color: ' + t.textDim + '; text-transform: uppercase; margin-bottom: 4px; }'
+      + '.dinav-history-summary { font-size: 12px; color: ' + t.textSecondary + '; line-height: 1.6; }';
   }
 
   // ── Initial injection ──
