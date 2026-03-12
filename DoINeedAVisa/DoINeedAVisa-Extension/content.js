@@ -139,9 +139,10 @@
 
     // Strategy 1: Insert as a native booking-option row in booking list
     var result = findBookingOptionsArea();
-    console.log('[DoINeedAVisa] findBookingOptionsArea:', result ? 'FOUND' : 'NOT FOUND', result);
     if (result) {
-      // Remove any existing floating CTA — we found the real spot
+      // If our CTA is already inside this container, don't recreate — avoids flicker
+      if (result.container.querySelector('[' + CTA_ATTR + ']')) return;
+      // Remove any floating CTA — we found the real spot
       removeCTA();
       clearTimeout(fallbackTimer);
       fallbackTimer = null;
@@ -161,6 +162,7 @@
         if (document.querySelector('[' + CTA_ATTR + ']')) return;
         var result2 = findBookingOptionsArea();
         if (result2) {
+          if (result2.container.querySelector('[' + CTA_ATTR + ']')) return;
           var row2 = createBookingRow();
           result2.container.insertBefore(row2, result2.insertBefore || null);
           return;
@@ -242,9 +244,15 @@
     subtitle.style.cssText = ''
       + 'font-size:12px; line-height:16px; margin-top:2px;'
       + 'color:var(--gm3-sys-color-on-surface-variant, #70757a);';
-    subtitle.textContent = 'Visa, transit & layover check';
+    subtitle.textContent = 'Set your passport to check visa';
     textCol.appendChild(title);
     textCol.appendChild(subtitle);
+
+    // Passport/visa context (shown inline when passport is set)
+    var ctxSpan = document.createElement('div');
+    ctxSpan.style.cssText = ''
+      + 'display:none; align-items:center; gap:6px; margin-left:12px; flex-shrink:0;'
+      + 'font-size:13px; color:var(--gm3-sys-color-on-surface-variant, #5f6368);';
 
     // Price — "Free" aligned right like dollar amounts
     var price = document.createElement('div');
@@ -268,13 +276,50 @@
 
     wrapper.appendChild(logo);
     wrapper.appendChild(textCol);
+    wrapper.appendChild(ctxSpan);
     wrapper.appendChild(price);
     wrapper.appendChild(btn);
 
+    // Track loaded prefs for smart click routing
+    var loadedPassport = '';
+    var loadedVisa = '';
+
+    // Async load prefs and update inline context
+    chrome.storage.local.get(['dinav_passport', 'dinav_visa'], function (data) {
+      loadedPassport = data.dinav_passport || '';
+      loadedVisa = data.dinav_visa || '';
+      if (loadedPassport) {
+        var c = getCountryByIso3(loadedPassport);
+        if (c) {
+          var html = '<img src="' + flagUrl(c.code, 16)
+            + '" style="width:16px;height:12px;border-radius:2px;object-fit:cover;vertical-align:middle" alt="" /> '
+            + c.name;
+          if (loadedVisa) {
+            for (var i = 0; i < DINAV_DOOR_OPENER_VISAS.length; i++) {
+              if (DINAV_DOOR_OPENER_VISAS[i].visaId === loadedVisa) {
+                html += ' \u00b7 ' + DINAV_DOOR_OPENER_VISAS[i].name;
+                break;
+              }
+            }
+          }
+          ctxSpan.innerHTML = html;
+          ctxSpan.style.display = 'flex';
+        }
+        subtitle.textContent = 'Visa, transit & layover check';
+      }
+    });
+
+    // Smart click: one-click search when prefs are known
     wrapper.addEventListener('click', function (e) {
       e.preventDefault();
       e.stopPropagation();
-      openOverlay();
+      if (!loadedPassport) {
+        // No passport — open panel with prefs expanded, passport search focused
+        openOverlay({ expandPrefs: true });
+      } else {
+        // Passport set (with or without visa) — open panel + auto-search immediately
+        openOverlay({ autoSearch: true });
+      }
     });
     wrapper.addEventListener('mouseenter', function () {
       wrapper.style.background = 'var(--gm3-sys-color-surface-container-low, rgba(0,0,0,0.02))';
@@ -310,7 +355,8 @@
 
   // ── Overlay ──
 
-  function openOverlay() {
+  function openOverlay(opts) {
+    opts = opts || {};
     if (document.getElementById(OVERLAY_ID)) {
       closeOverlay();
       return;
@@ -341,12 +387,17 @@
     shadowRoot.appendChild(container);
     document.body.appendChild(overlayHost);
 
+    // Push page content left (like Gemini panel)
+    document.body.style.transition = 'margin-right 0.3s ease';
+    document.body.style.marginRight = '380px';
+
     // Build passport list and visa pills
     buildPassportList('');
     renderVisaPills('');
 
     // Load saved preferences
     chrome.storage.local.get(['dinav_passport', 'dinav_visa'], function (data) {
+      if (!shadowRoot) return; // panel was closed before storage callback
       if (data.dinav_passport) {
         selectPassport(data.dinav_passport, true);
       }
@@ -356,11 +407,21 @@
       }
       // Render visa pills with passport context
       renderVisaPills(data.dinav_passport || '');
-      // If we have a saved passport, keep editor collapsed (context bar shows summary)
-      // Otherwise expand so user can pick
-      if (!data.dinav_passport) {
+
+      // Determine prefs expansion
+      if (opts.expandPrefs || !data.dinav_passport) {
         var editor = shadowRoot.querySelector('#dinav-prefs-editor');
         if (editor) editor.classList.add('open');
+        // Auto-focus passport search when prefs are expanded
+        var passportMenu = shadowRoot.querySelector('#dinav-passport-menu');
+        if (passportMenu) passportMenu.classList.add('open');
+        var searchInput = shadowRoot.querySelector('#dinav-passport-search');
+        if (searchInput) setTimeout(function () { searchInput.focus(); }, 100);
+      }
+
+      // Auto-search: fire immediately if passport is set
+      if (opts.autoSearch && data.dinav_passport) {
+        runVisaCheck(parsed);
       }
     });
 
@@ -560,6 +621,8 @@
   }
 
   function closeOverlay() {
+    // Restore page content position
+    document.body.style.marginRight = '';
     if (overlayHost) {
       overlayHost.remove();
       overlayHost = null;
