@@ -173,68 +173,40 @@
   }
 
   function findBookingOptionsArea() {
-    // Strategy: find elements by TEXT CONTENT (robust against obfuscated class names)
-
-    // 1. Find any "Book with …" text node and walk up to the list container
-    var allEls = document.querySelectorAll('*');
-    var bookWithEl = null;
-    for (var i = 0; i < allEls.length; i++) {
-      var txt = allEls[i].textContent || '';
-      // Match "Book with X" but only on leaf-ish elements (not huge containers)
-      if (/^Book with\s/i.test(txt.trim()) && allEls[i].children.length <= 2 && txt.length < 60) {
-        bookWithEl = allEls[i];
-        break;
-      }
-    }
-
-    if (bookWithEl) {
-      // Walk up to find the row-like ancestor (the clickable booking row)
-      // A booking row typically has: logo + text + price + button — roughly 100-300px tall
-      var row = bookWithEl;
-      for (var j = 0; j < 8; j++) {
-        if (!row.parentElement) break;
-        row = row.parentElement;
-        // The list container is the parent that holds multiple booking rows
-        var siblings = row.parentElement ? row.parentElement.children : [];
-        if (siblings.length >= 2) {
-          // Check if siblings also contain "Book with" — confirms this is the list
-          var siblingBookCount = 0;
-          for (var k = 0; k < siblings.length; k++) {
-            if (/Book with\s/i.test(siblings[k].textContent || '')) siblingBookCount++;
+    // Find "Booking options" text on the page, then insert right after that heading section
+    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+    while (walker.nextNode()) {
+      var node = walker.currentNode;
+      if (/^Booking options$/i.test(node.textContent.trim())) {
+        // Found the heading text — walk up to find the section wrapper
+        var heading = node.parentElement;
+        // The heading might be inside a wrapper (e.g. h2 > span > text)
+        // Walk up until we find an element that has sibling(s) containing "Book with"
+        var section = heading;
+        for (var i = 0; i < 6; i++) {
+          if (!section.parentElement) break;
+          section = section.parentElement;
+          var next = section.nextElementSibling;
+          if (next && /Book with/i.test(next.textContent || '')) {
+            // next is the first booking row — insert before it
+            return { container: section.parentElement, insertBefore: next };
           }
-          if (siblingBookCount >= 2) {
-            // row.parentElement is the booking list container
-            return { container: row.parentElement, insertBefore: null };
-          }
-        }
-      }
-      // If only 1 "Book with" row, use its parent as container
-      if (row.parentElement) {
-        return { container: row.parentElement, insertBefore: null };
-      }
-    }
-
-    // 2. Find "Booking options" heading and use the next sibling container
-    var headings = document.querySelectorAll('h2, h3, [role="heading"]');
-    for (var h = 0; h < headings.length; h++) {
-      if (/booking\s*options/i.test(headings[h].textContent || '')) {
-        // Walk up a couple levels to find the section container
-        var section = headings[h].parentElement;
-        for (var p = 0; p < 4; p++) {
-          if (!section) break;
-          // Look for a child that contains multiple "Book with" entries
-          var kids = section.children;
-          for (var c = 0; c < kids.length; c++) {
-            var bookCount = (kids[c].textContent || '').split(/Book with/i).length - 1;
-            if (bookCount >= 2) {
-              return { container: kids[c], insertBefore: null };
+          // Also check: does this section's parent contain "Book with" children?
+          var kids = section.parentElement.children;
+          for (var k = 0; k < kids.length; k++) {
+            if (kids[k] !== section && /Book with/i.test(kids[k].textContent || '')) {
+              // Insert right after the heading section, before the first booking row
+              return { container: section.parentElement, insertBefore: kids[k] };
             }
           }
-          section = section.parentElement;
+        }
+        // Fallback: just append after the heading's parent
+        if (heading.parentElement) {
+          var parent = heading.parentElement;
+          return { container: parent.parentElement || parent, insertBefore: parent.nextElementSibling };
         }
       }
     }
-
     return null;
   }
 
