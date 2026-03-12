@@ -126,32 +126,49 @@
     }
   }
 
+  var FALLBACK_DELAY = 4000; // ms before giving up on native row and using floating CTA
+  var fallbackTimer = null;
+
   function tryInjectCTA() {
     if (!hasTfsParam()) {
       removeCTA();
+      clearTimeout(fallbackTimer);
+      fallbackTimer = null;
       return;
     }
-    if (document.querySelector('[' + CTA_ATTR + ']')) return;
 
-    // Strategy 1: Insert as a booking-option row near "Booking options" header
+    // Strategy 1: Insert as a native booking-option row
     var result = findBookingOptionsArea();
     if (result) {
+      // Remove any existing floating CTA — we found the real spot
+      removeCTA();
+      clearTimeout(fallbackTimer);
+      fallbackTimer = null;
       var row = createBookingRow();
       result.container.insertBefore(row, result.firstRow);
       return;
     }
 
-    // Strategy 2: Find a "Book with" link and insert next to it
-    var anchor = findBookAnchor();
-    if (anchor) {
-      var btn = createCTAButton(false);
-      anchor.parentNode.insertBefore(btn, anchor.nextSibling);
-      return;
-    }
+    // Already have a CTA injected (native row or floating) — don't duplicate
+    if (document.querySelector('[' + CTA_ATTR + ']')) return;
 
-    // Fallback: floating button
-    var floating = createCTAButton(true);
-    document.body.appendChild(floating);
+    // Booking options not in DOM yet — schedule floating fallback after delay
+    if (!fallbackTimer) {
+      fallbackTimer = setTimeout(function () {
+        fallbackTimer = null;
+        // Double-check: maybe booking options appeared in the meantime
+        if (document.querySelector('[' + CTA_ATTR + ']')) return;
+        var result2 = findBookingOptionsArea();
+        if (result2) {
+          var row2 = createBookingRow();
+          result2.container.insertBefore(row2, result2.firstRow);
+          return;
+        }
+        // Still no booking options — use floating fallback
+        var floating = createCTAButton(true);
+        document.body.appendChild(floating);
+      }, FALLBACK_DELAY);
+    }
   }
 
   function findBookingOptionsArea() {
@@ -173,24 +190,6 @@
             if (row) return { container: list, firstRow: row };
           }
         }
-      }
-    }
-    return null;
-  }
-
-  function findBookAnchor() {
-    var allButtons = document.querySelectorAll('button, a[role="link"], a[href]');
-    for (var i = 0; i < allButtons.length; i++) {
-      var el = allButtons[i];
-      var text = (el.textContent || '').trim();
-      if (/^Book(\s|$)/i.test(text) && el.offsetParent !== null) {
-        return el;
-      }
-    }
-    var bookingLinks = document.querySelectorAll('a[href*="book"], a[data-ved]');
-    for (var j = 0; j < bookingLinks.length; j++) {
-      if (bookingLinks[j].offsetParent !== null) {
-        return bookingLinks[j];
       }
     }
     return null;
