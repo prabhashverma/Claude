@@ -137,7 +137,7 @@
       return;
     }
 
-    // Strategy 1: Insert as a native booking-option row
+    // Strategy 1: Insert as a native booking-option row (above "more options" expander)
     var result = findBookingOptionsArea();
     if (result) {
       // Remove any existing floating CTA — we found the real spot
@@ -145,7 +145,7 @@
       clearTimeout(fallbackTimer);
       fallbackTimer = null;
       var row = createBookingRow();
-      result.container.insertBefore(row, result.firstRow);
+      result.container.insertBefore(row, result.insertBefore || null);
       return;
     }
 
@@ -161,7 +161,7 @@
         var result2 = findBookingOptionsArea();
         if (result2) {
           var row2 = createBookingRow();
-          result2.container.insertBefore(row2, result2.firstRow);
+          result2.container.insertBefore(row2, result2.insertBefore || null);
           return;
         }
         // Still no booking options — use floating fallback
@@ -172,23 +172,19 @@
   }
 
   function findBookingOptionsArea() {
-    // Strategy 1: Find the booking list container .UUyzUc and its first .gN1nAc row
+    // Find .UUyzUc booking list — append as last child (inside the card container)
     var listContainer = document.querySelector('.UUyzUc');
     if (listContainer) {
-      var firstRow = listContainer.querySelector('.gN1nAc');
-      if (firstRow) return { container: listContainer, firstRow: firstRow };
+      return { container: listContainer, insertBefore: null }; // null = appendChild
     }
-    // Strategy 2: Find "Booking options" heading and walk to the list
+    // Fallback: find "Booking options" heading and walk to the list
     var headings = document.querySelectorAll('h2.n9rd7b, h2');
     for (var i = 0; i < headings.length; i++) {
       if (/booking\s*options/i.test(headings[i].textContent || '')) {
         var parent = headings[i].closest('.pkMWGc') || headings[i].parentElement;
         if (parent) {
           var list = parent.querySelector('.UUyzUc');
-          if (list) {
-            var row = list.querySelector('.gN1nAc');
-            if (row) return { container: list, firstRow: row };
-          }
+          if (list) return { container: list, insertBefore: null };
         }
       }
     }
@@ -196,78 +192,75 @@
   }
 
   function createBookingRow() {
-    // Mirror Google Flights' actual DOM structure:
-    // .gN1nAc > .L53Hhb > .GQfMl > [ .zwo4Rd (logo+text+price) , button ]
+    // Fully inline-styled row that matches Google Flights booking option rows
     var wrapper = document.createElement('div');
-    wrapper.className = 'gN1nAc';
     wrapper.setAttribute(CTA_ATTR, 'true');
+    wrapper.style.cssText = ''
+      + 'display:flex; align-items:center; padding:16px 20px; cursor:pointer;'
+      + 'border-top:1px solid var(--gm3-sys-color-outline-variant, #dadce0);'
+      + 'font-family:"Google Sans",Roboto,Arial,sans-serif;'
+      + 'transition:background 0.15s;';
 
-    var inner = document.createElement('div');
-    inner.className = 'L53Hhb';
-
-    var flexRow = document.createElement('div');
-    flexRow.className = 'GQfMl';
-
-    // Left section: logo + text + badge
-    var leftSection = document.createElement('div');
-    leftSection.className = 'zwo4Rd';
-
-    // Logo — circle with plane icon (matches .rtil5 > .MnHIn sizing)
-    var logoWrap = document.createElement('div');
-    logoWrap.className = 'rtil5';
-    var logoInner = document.createElement('div');
-    logoInner.style.cssText = ''
-      + 'width:40px; height:40px; border-radius:50%;'
+    // Logo — gradient circle with plane icon (40x40, matches partner logos)
+    var logo = document.createElement('div');
+    logo.style.cssText = ''
+      + 'width:40px; height:40px; border-radius:50%; flex-shrink:0; margin-right:16px;'
       + 'background:linear-gradient(135deg,#8ab4f8,#1a73e8);'
       + 'display:flex; align-items:center; justify-content:center;'
-      + 'font-size:18px; color:#fff; flex-shrink:0;';
-    logoInner.textContent = '\u2708';
-    logoWrap.appendChild(logoInner);
+      + 'font-size:18px; color:#fff;';
+    logo.textContent = '\u2708';
 
-    // Text area — matches .AovMJd > .ogfYpf.AdWm1c
-    var textArea = document.createElement('div');
-    textArea.className = 'AovMJd';
-    var titleEl = document.createElement('div');
-    titleEl.className = 'ogfYpf AdWm1c';
-    titleEl.textContent = 'Check with DoINeedAVisa';
-    var subtitleEl = document.createElement('div');
-    subtitleEl.style.cssText = 'font-size:12px; color:var(--gm3-sys-color-on-surface-variant, #70757a); margin-top:2px;';
-    subtitleEl.textContent = 'Visa, transit & layover check';
-    textArea.appendChild(titleEl);
-    textArea.appendChild(subtitleEl);
+    // Text column
+    var textCol = document.createElement('div');
+    textCol.style.cssText = 'flex:1; min-width:0;';
+    var title = document.createElement('div');
+    title.style.cssText = ''
+      + 'font-size:14px; font-weight:400; line-height:20px;'
+      + 'color:var(--gm3-sys-color-on-surface, #202124);';
+    title.textContent = 'Check with DoINeedAVisa';
+    var subtitle = document.createElement('div');
+    subtitle.style.cssText = ''
+      + 'font-size:12px; line-height:16px; margin-top:2px;'
+      + 'color:var(--gm3-sys-color-on-surface-variant, #70757a);';
+    subtitle.textContent = 'Visa, transit & layover check';
+    textCol.appendChild(title);
+    textCol.appendChild(subtitle);
 
-    // Price area — "Free" badge
-    var priceArea = document.createElement('div');
-    priceArea.className = 'IX8ct YMlIz';
-    priceArea.style.cssText = ''
-      + 'font-size:14px; font-weight:500;'
-      + 'color:var(--gm3-sys-color-primary, #1a73e8);'
-      + 'white-space:nowrap; margin-left:auto;';
-    priceArea.textContent = 'Free';
+    // Price — "Free" aligned right like dollar amounts
+    var price = document.createElement('div');
+    price.style.cssText = ''
+      + 'font-size:14px; font-weight:500; white-space:nowrap; margin-left:auto; padding-left:16px;'
+      + 'color:var(--gm3-sys-color-on-surface, #202124);';
+    price.textContent = 'Free';
 
-    leftSection.appendChild(logoWrap);
-    leftSection.appendChild(textArea);
-    leftSection.appendChild(priceArea);
-
-    // CTA button — matches Google's "Continue" button styling
+    // "Continue" style outlined button
     var btn = document.createElement('button');
     btn.style.cssText = ''
       + 'margin-left:16px; padding:8px 24px; border-radius:20px;'
-      + 'border:none; background:var(--gm3-sys-color-primary, #1a73e8);'
-      + 'color:var(--gm3-sys-color-on-primary, #fff);'
+      + 'border:1px solid var(--gm3-sys-color-outline, #747775);'
+      + 'background:transparent; color:var(--gm3-sys-color-primary, #1a73e8);'
       + 'font-size:14px; font-weight:500; cursor:pointer;'
-      + 'font-family:"Google Sans",Roboto,Arial,sans-serif; white-space:nowrap;';
+      + 'font-family:"Google Sans",Roboto,Arial,sans-serif; white-space:nowrap;'
+      + 'line-height:20px;';
     btn.textContent = 'Check';
+    btn.addEventListener('mouseenter', function () { btn.style.background = 'rgba(26,115,232,0.04)'; });
+    btn.addEventListener('mouseleave', function () { btn.style.background = 'transparent'; });
 
-    flexRow.appendChild(leftSection);
-    flexRow.appendChild(btn);
-    inner.appendChild(flexRow);
-    wrapper.appendChild(inner);
+    wrapper.appendChild(logo);
+    wrapper.appendChild(textCol);
+    wrapper.appendChild(price);
+    wrapper.appendChild(btn);
 
     wrapper.addEventListener('click', function (e) {
       e.preventDefault();
       e.stopPropagation();
       openOverlay();
+    });
+    wrapper.addEventListener('mouseenter', function () {
+      wrapper.style.background = 'var(--gm3-sys-color-surface-container-low, rgba(0,0,0,0.02))';
+    });
+    wrapper.addEventListener('mouseleave', function () {
+      wrapper.style.background = '';
     });
 
     return wrapper;
@@ -277,7 +270,9 @@
     var btn = document.createElement('button');
     btn.setAttribute(CTA_ATTR, 'true');
     btn.className = 'dinav-cta-btn' + (floating ? ' dinav-cta-floating' : '');
-    btn.textContent = 'Visa Check';
+    // Branded logo: do[i]need[a]visa with accent-colored i and a
+    btn.innerHTML = '<span class="dinav-cta-plane">\u2708</span>'
+      + '<span class="dinav-cta-logo">do<span class="dinav-cta-accent">i</span>need<span class="dinav-cta-accent">a</span>visa</span>';
     btn.addEventListener('click', function (e) {
       e.preventDefault();
       e.stopPropagation();
