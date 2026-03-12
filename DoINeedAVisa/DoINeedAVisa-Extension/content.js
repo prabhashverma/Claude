@@ -134,10 +134,10 @@
     if (document.querySelector('[' + CTA_ATTR + ']')) return;
 
     // Strategy 1: Insert as a booking-option row near "Booking options" header
-    var bookingRow = findBookingOptionsArea();
-    if (bookingRow) {
+    var result = findBookingOptionsArea();
+    if (result) {
       var row = createBookingRow();
-      bookingRow.parentNode.insertBefore(row, bookingRow);
+      result.container.insertBefore(row, result.firstRow);
       return;
     }
 
@@ -155,29 +155,23 @@
   }
 
   function findBookingOptionsArea() {
-    // Look for "Booking options" heading text, then find the first booking row after it
-    var allHeadings = document.querySelectorAll('h2, h3, div[role="heading"], [aria-level]');
-    for (var i = 0; i < allHeadings.length; i++) {
-      var text = (allHeadings[i].textContent || '').trim();
-      if (/booking\s*options/i.test(text)) {
-        // Found the heading — find the first booking list item (the list container or first row)
-        var parent = allHeadings[i].parentElement;
-        // Walk up a bit to find the container, then look for the first list item
-        for (var p = 0; p < 4; p++) {
-          if (!parent) break;
-          // Look for the first "Book with" row within this container
-          var bookRows = parent.querySelectorAll('li, [data-ved]');
-          if (bookRows.length > 0) {
-            return bookRows[0];
+    // Strategy 1: Find the booking list container .UUyzUc and its first .gN1nAc row
+    var listContainer = document.querySelector('.UUyzUc');
+    if (listContainer) {
+      var firstRow = listContainer.querySelector('.gN1nAc');
+      if (firstRow) return { container: listContainer, firstRow: firstRow };
+    }
+    // Strategy 2: Find "Booking options" heading and walk to the list
+    var headings = document.querySelectorAll('h2.n9rd7b, h2');
+    for (var i = 0; i < headings.length; i++) {
+      if (/booking\s*options/i.test(headings[i].textContent || '')) {
+        var parent = headings[i].closest('.pkMWGc') || headings[i].parentElement;
+        if (parent) {
+          var list = parent.querySelector('.UUyzUc');
+          if (list) {
+            var row = list.querySelector('.gN1nAc');
+            if (row) return { container: list, firstRow: row };
           }
-          parent = parent.parentElement;
-        }
-        // Fallback: return the heading's next sibling container
-        var next = allHeadings[i].nextElementSibling;
-        if (next) {
-          var firstChild = next.querySelector('li, [data-ved]');
-          if (firstChild) return firstChild;
-          return next.firstElementChild || next;
         }
       }
     }
@@ -203,71 +197,81 @@
   }
 
   function createBookingRow() {
-    var row = document.createElement('div');
-    row.setAttribute(CTA_ATTR, 'true');
-    row.style.cssText = ''
-      + 'display:flex; align-items:center; padding:16px 24px; cursor:pointer;'
-      + 'border:1px solid var(--gm3-sys-color-outline-variant, #dadce0);'
-      + 'border-radius:12px; margin-bottom:8px; transition:background 0.15s;'
-      + 'font-family:"Google Sans",Roboto,Arial,sans-serif;';
+    // Mirror Google Flights' actual DOM structure:
+    // .gN1nAc > .L53Hhb > .GQfMl > [ .zwo4Rd (logo+text+price) , button ]
+    var wrapper = document.createElement('div');
+    wrapper.className = 'gN1nAc';
+    wrapper.setAttribute(CTA_ATTR, 'true');
 
-    // Logo circle
-    var logo = document.createElement('div');
-    logo.style.cssText = ''
+    var inner = document.createElement('div');
+    inner.className = 'L53Hhb';
+
+    var flexRow = document.createElement('div');
+    flexRow.className = 'GQfMl';
+
+    // Left section: logo + text + badge
+    var leftSection = document.createElement('div');
+    leftSection.className = 'zwo4Rd';
+
+    // Logo — circle with plane icon (matches .rtil5 > .MnHIn sizing)
+    var logoWrap = document.createElement('div');
+    logoWrap.className = 'rtil5';
+    var logoInner = document.createElement('div');
+    logoInner.style.cssText = ''
       + 'width:40px; height:40px; border-radius:50%;'
       + 'background:linear-gradient(135deg,#8ab4f8,#1a73e8);'
       + 'display:flex; align-items:center; justify-content:center;'
-      + 'font-size:18px; color:#fff; flex-shrink:0; margin-right:16px;';
-    logo.textContent = '\u2708';
+      + 'font-size:18px; color:#fff; flex-shrink:0;';
+    logoInner.textContent = '\u2708';
+    logoWrap.appendChild(logoInner);
 
-    // Text
-    var text = document.createElement('div');
-    text.style.cssText = 'flex:1; min-width:0;';
-    var title = document.createElement('div');
-    title.style.cssText = 'font-size:14px; font-weight:500; color:var(--gm3-sys-color-on-surface, #202124);';
-    title.textContent = 'Check with DoINeedAVisa';
-    var subtitle = document.createElement('div');
-    subtitle.style.cssText = 'font-size:12px; color:var(--gm3-sys-color-on-surface-variant, #70757a); margin-top:2px;';
-    subtitle.textContent = 'Visa, transit & layover check';
-    text.appendChild(title);
-    text.appendChild(subtitle);
+    // Text area — matches .AovMJd > .ogfYpf.AdWm1c
+    var textArea = document.createElement('div');
+    textArea.className = 'AovMJd';
+    var titleEl = document.createElement('div');
+    titleEl.className = 'ogfYpf AdWm1c';
+    titleEl.textContent = 'Check with DoINeedAVisa';
+    var subtitleEl = document.createElement('div');
+    subtitleEl.style.cssText = 'font-size:12px; color:var(--gm3-sys-color-on-surface-variant, #70757a); margin-top:2px;';
+    subtitleEl.textContent = 'Visa, transit & layover check';
+    textArea.appendChild(titleEl);
+    textArea.appendChild(subtitleEl);
 
-    // Badge
-    var badge = document.createElement('span');
-    badge.style.cssText = ''
-      + 'font-size:11px; font-weight:500; color:#1a73e8;'
-      + 'background:#e8f0fe; padding:4px 12px; border-radius:16px; margin-left:12px; white-space:nowrap;';
-    badge.textContent = 'Free';
+    // Price area — "Free" badge
+    var priceArea = document.createElement('div');
+    priceArea.className = 'IX8ct YMlIz';
+    priceArea.style.cssText = ''
+      + 'font-size:14px; font-weight:500;'
+      + 'color:var(--gm3-sys-color-primary, #1a73e8);'
+      + 'white-space:nowrap; margin-left:auto;';
+    priceArea.textContent = 'Free';
 
-    // CTA button
+    leftSection.appendChild(logoWrap);
+    leftSection.appendChild(textArea);
+    leftSection.appendChild(priceArea);
+
+    // CTA button — matches Google's "Continue" button styling
     var btn = document.createElement('button');
     btn.style.cssText = ''
-      + 'margin-left:12px; padding:8px 20px; border-radius:20px;'
-      + 'border:1px solid var(--gm3-sys-color-outline, #747775);'
-      + 'background:transparent; color:var(--gm3-sys-color-primary, #1a73e8);'
+      + 'margin-left:16px; padding:8px 24px; border-radius:20px;'
+      + 'border:none; background:var(--gm3-sys-color-primary, #1a73e8);'
+      + 'color:var(--gm3-sys-color-on-primary, #fff);'
       + 'font-size:14px; font-weight:500; cursor:pointer;'
       + 'font-family:"Google Sans",Roboto,Arial,sans-serif; white-space:nowrap;';
     btn.textContent = 'Check';
 
-    row.appendChild(logo);
-    row.appendChild(text);
-    row.appendChild(badge);
-    row.appendChild(btn);
+    flexRow.appendChild(leftSection);
+    flexRow.appendChild(btn);
+    inner.appendChild(flexRow);
+    wrapper.appendChild(inner);
 
-    row.addEventListener('click', function (e) {
+    wrapper.addEventListener('click', function (e) {
       e.preventDefault();
       e.stopPropagation();
       openOverlay();
     });
 
-    row.addEventListener('mouseenter', function () {
-      row.style.background = 'var(--gm3-sys-color-surface-container-low, #f8f9fa)';
-    });
-    row.addEventListener('mouseleave', function () {
-      row.style.background = '';
-    });
-
-    return row;
+    return wrapper;
   }
 
   function createCTAButton(floating) {
