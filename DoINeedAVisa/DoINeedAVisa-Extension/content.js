@@ -224,14 +224,15 @@
       }
       if (data.dinav_visa) {
         shadowRoot.querySelector('#dinav-visa').value = data.dinav_visa;
-        // Re-render visa pills with saved selection
-        renderVisaPills(data.dinav_passport || '');
-        var pills = shadowRoot.querySelectorAll('.dinav-visa-pill');
-        for (var i = 0; i < pills.length; i++) {
-          if (pills[i].getAttribute('data-visa') === data.dinav_visa) {
-            pills[i].classList.add('active');
-          }
-        }
+        updateContextVisa(data.dinav_visa);
+      }
+      // Render visa pills with passport context
+      renderVisaPills(data.dinav_passport || '');
+      // If we have a saved passport, keep editor collapsed (context bar shows summary)
+      // Otherwise expand so user can pick
+      if (!data.dinav_passport) {
+        var editor = shadowRoot.querySelector('#dinav-prefs-editor');
+        if (editor) editor.classList.add('open');
       }
     });
 
@@ -240,6 +241,12 @@
 
     // Event listeners
     shadowRoot.querySelector('#dinav-close').addEventListener('click', closeOverlay);
+
+    // Context bar click — toggle prefs editor
+    shadowRoot.querySelector('#dinav-context-bar').addEventListener('click', function () {
+      var editor = shadowRoot.querySelector('#dinav-prefs-editor');
+      editor.classList.toggle('open');
+    });
 
     // Passport dropdown toggle
     shadowRoot.querySelector('#dinav-passport-trigger').addEventListener('click', function () {
@@ -331,16 +338,37 @@
     if (!shadowRoot) return;
     var hidden = shadowRoot.querySelector('#dinav-passport');
     var label = shadowRoot.querySelector('#dinav-passport-label');
+    var ctxPassport = shadowRoot.querySelector('#dinav-context-passport');
     hidden.value = iso3;
     var c = getCountryByIso3(iso3);
     if (c) {
       label.innerHTML = '<img class="dinav-flag" src="' + flagUrl(c.code, 16) + '" alt="" /> ' + c.name;
+      if (ctxPassport) ctxPassport.innerHTML = 'Passport: <img class="dinav-flag" src="' + flagUrl(c.code, 16) + '" alt="" /> ' + c.name;
     } else {
       label.textContent = iso3 || 'Select passport';
+      if (ctxPassport) ctxPassport.textContent = 'Select passport';
     }
     if (!silent) {
       renderVisaPills(iso3);
     }
+  }
+
+  function updateContextVisa(visaId) {
+    if (!shadowRoot) return;
+    var ctxVisa = shadowRoot.querySelector('#dinav-context-visa');
+    if (!ctxVisa) return;
+    if (!visaId) {
+      ctxVisa.textContent = 'None';
+      return;
+    }
+    for (var i = 0; i < DINAV_DOOR_OPENER_VISAS.length; i++) {
+      var v = DINAV_DOOR_OPENER_VISAS[i];
+      if (v.visaId === visaId) {
+        ctxVisa.innerHTML = '<img class="dinav-flag" src="' + flagUrl(v.iso2, 14) + '" alt="" /> ' + v.name;
+        return;
+      }
+    }
+    ctxVisa.textContent = visaId.replace(/_/g, ' ');
   }
 
   function renderVisaPills(passportIso3) {
@@ -352,6 +380,9 @@
     var filtered = getFilteredVisaOptions(passportIso3 || '');
     var currentVisa = hiddenInput ? hiddenInput.value : '';
 
+    // Update context bar
+    updateContextVisa(currentVisa);
+
     // "None" pill
     var nonePill = document.createElement('button');
     nonePill.className = 'dinav-visa-pill' + (!currentVisa ? ' active' : '');
@@ -361,6 +392,7 @@
       var all = container.querySelectorAll('.dinav-visa-pill');
       for (var i = 0; i < all.length; i++) all[i].classList.remove('active');
       nonePill.classList.add('active');
+      updateContextVisa('');
     });
     container.appendChild(nonePill);
 
@@ -375,12 +407,13 @@
           var all = container.querySelectorAll('.dinav-visa-pill');
           for (var j = 0; j < all.length; j++) all[j].classList.remove('active');
           if (wasActive) {
-            // Deselect — go back to None
             hiddenInput.value = '';
             nonePill.classList.add('active');
+            updateContextVisa('');
           } else {
             hiddenInput.value = v.visaId;
             pill.classList.add('active');
+            updateContextVisa(v.visaId);
           }
         });
         container.appendChild(pill);
@@ -446,30 +479,40 @@
       + '    <button id="dinav-close" class="dinav-close-btn">&times;</button>'
       + '  </div>'
       + '</div>'
+      // Passport & Visa context bar (clickable to expand editor)
+      + '<div class="dinav-context-bar" id="dinav-context-bar">'
+      + '  <span id="dinav-context-passport" class="dinav-context-text">Select passport</span>'
+      + '  <span class="dinav-context-sep">|</span>'
+      + '  <span class="dinav-context-label">Visa:</span>'
+      + '  <span id="dinav-context-visa" class="dinav-context-text">None</span>'
+      + '  <svg class="dinav-context-edit" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>'
+      + '</div>'
+      // Hidden inputs
+      + '<input type="hidden" id="dinav-passport" value="" />'
+      + '<input type="hidden" id="dinav-visa" value="" />'
+      // Collapsible passport/visa editor
+      + '<div class="dinav-prefs-editor" id="dinav-prefs-editor">'
+      + '  <div class="dinav-field">'
+      + '    <label>Passport</label>'
+      + '    <div class="dinav-custom-select" id="dinav-passport-dropdown">'
+      + '      <div class="dinav-select-trigger" id="dinav-passport-trigger">'
+      + '        <span class="dinav-select-value" id="dinav-passport-label">Select passport</span>'
+      + '        <span class="dinav-select-arrow">&#9662;</span>'
+      + '      </div>'
+      + '      <div class="dinav-select-menu" id="dinav-passport-menu">'
+      + '        <input type="text" class="dinav-select-search" id="dinav-passport-search" placeholder="Search countries..." />'
+      + '        <div class="dinav-select-list" id="dinav-passport-list"></div>'
+      + '      </div>'
+      + '    </div>'
+      + '  </div>'
+      + '  <div class="dinav-field">'
+      + '    <label>Visa held</label>'
+      + '    <div class="dinav-visa-pills" id="dinav-visa-pills"></div>'
+      + '  </div>'
+      + '</div>'
       + '<div class="dinav-body">'
       + '  <div class="dinav-flights">' + flightTags + '</div>'
       + '  <div class="dinav-form">'
-      // Passport — custom dropdown with search + flags
-      + '    <div class="dinav-field">'
-      + '      <label>Passport</label>'
-      + '      <input type="hidden" id="dinav-passport" value="" />'
-      + '      <div class="dinav-custom-select" id="dinav-passport-dropdown">'
-      + '        <div class="dinav-select-trigger" id="dinav-passport-trigger">'
-      + '          <span class="dinav-select-value" id="dinav-passport-label">Select passport</span>'
-      + '          <span class="dinav-select-arrow">&#9662;</span>'
-      + '        </div>'
-      + '        <div class="dinav-select-menu" id="dinav-passport-menu">'
-      + '          <input type="text" class="dinav-select-search" id="dinav-passport-search" placeholder="Search countries..." />'
-      + '          <div class="dinav-select-list" id="dinav-passport-list"></div>'
-      + '        </div>'
-      + '      </div>'
-      + '    </div>'
-      // Visa — pill buttons with flags
-      + '    <div class="dinav-field">'
-      + '      <label>Visa held</label>'
-      + '      <input type="hidden" id="dinav-visa" value="" />'
-      + '      <div class="dinav-visa-pills" id="dinav-visa-pills"></div>'
-      + '    </div>'
       + '    <button id="dinav-check" class="dinav-btn-primary">Check Visa</button>'
       + '  </div>'
       + '  <div id="dinav-results" class="dinav-results" style="display:none">'
@@ -791,6 +834,28 @@
       + '  cursor: pointer; padding: 4px 8px; border-radius: 4px; font-family: inherit;'
       + '}'
       + '.dinav-close-btn:hover { color: ' + t.textPrimary + '; background: ' + t.hoverBg + '; }'
+      // Context bar
+      + '.dinav-context-bar {'
+      + '  display: flex; align-items: center; justify-content: center; gap: 6px;'
+      + '  padding: 8px 20px; cursor: pointer;'
+      + '  font-size: 11px; color: ' + t.textDim + ';'
+      + '  border-bottom: 1px solid ' + t.border + ';'
+      + '  transition: background 0.2s;'
+      + '}'
+      + '.dinav-context-bar:hover { background: ' + t.hoverBg + '; }'
+      + '.dinav-context-text { display: inline-flex; align-items: center; gap: 5px; color: ' + t.textPrimary + '; }'
+      + '.dinav-context-label { color: ' + t.textDim + '; }'
+      + '.dinav-context-sep { color: ' + t.border + '; }'
+      + '.dinav-context-edit { color: ' + t.textDim + '; opacity: 0.6; margin-left: 4px; flex-shrink: 0; }'
+      // Collapsible prefs editor
+      + '.dinav-prefs-editor {'
+      + '  max-height: 0; overflow: hidden; transition: max-height 0.3s ease, padding 0.3s ease;'
+      + '  padding: 0 20px; border-bottom: none;'
+      + '}'
+      + '.dinav-prefs-editor.open {'
+      + '  max-height: 400px; padding: 14px 20px;'
+      + '  border-bottom: 1px solid ' + t.border + ';'
+      + '}'
       + '.dinav-body { padding: 16px 20px; flex: 1; }'
       + '.dinav-flights { margin-bottom: 16px; }'
       + '.dinav-flight-tag {'
