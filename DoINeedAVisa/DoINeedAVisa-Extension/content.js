@@ -137,8 +137,9 @@
       return;
     }
 
-    // Strategy 1: Insert as a native booking-option row (above "more options" expander)
+    // Strategy 1: Insert as a native booking-option row in booking list
     var result = findBookingOptionsArea();
+    console.log('[DoINeedAVisa] findBookingOptionsArea:', result ? 'FOUND' : 'NOT FOUND', result);
     if (result) {
       // Remove any existing floating CTA — we found the real spot
       removeCTA();
@@ -172,22 +173,68 @@
   }
 
   function findBookingOptionsArea() {
-    // Find .UUyzUc booking list — append as last child (inside the card container)
-    var listContainer = document.querySelector('.UUyzUc');
-    if (listContainer) {
-      return { container: listContainer, insertBefore: null }; // null = appendChild
+    // Strategy: find elements by TEXT CONTENT (robust against obfuscated class names)
+
+    // 1. Find any "Book with …" text node and walk up to the list container
+    var allEls = document.querySelectorAll('*');
+    var bookWithEl = null;
+    for (var i = 0; i < allEls.length; i++) {
+      var txt = allEls[i].textContent || '';
+      // Match "Book with X" but only on leaf-ish elements (not huge containers)
+      if (/^Book with\s/i.test(txt.trim()) && allEls[i].children.length <= 2 && txt.length < 60) {
+        bookWithEl = allEls[i];
+        break;
+      }
     }
-    // Fallback: find "Booking options" heading and walk to the list
-    var headings = document.querySelectorAll('h2.n9rd7b, h2');
-    for (var i = 0; i < headings.length; i++) {
-      if (/booking\s*options/i.test(headings[i].textContent || '')) {
-        var parent = headings[i].closest('.pkMWGc') || headings[i].parentElement;
-        if (parent) {
-          var list = parent.querySelector('.UUyzUc');
-          if (list) return { container: list, insertBefore: null };
+
+    if (bookWithEl) {
+      // Walk up to find the row-like ancestor (the clickable booking row)
+      // A booking row typically has: logo + text + price + button — roughly 100-300px tall
+      var row = bookWithEl;
+      for (var j = 0; j < 8; j++) {
+        if (!row.parentElement) break;
+        row = row.parentElement;
+        // The list container is the parent that holds multiple booking rows
+        var siblings = row.parentElement ? row.parentElement.children : [];
+        if (siblings.length >= 2) {
+          // Check if siblings also contain "Book with" — confirms this is the list
+          var siblingBookCount = 0;
+          for (var k = 0; k < siblings.length; k++) {
+            if (/Book with\s/i.test(siblings[k].textContent || '')) siblingBookCount++;
+          }
+          if (siblingBookCount >= 2) {
+            // row.parentElement is the booking list container
+            return { container: row.parentElement, insertBefore: null };
+          }
+        }
+      }
+      // If only 1 "Book with" row, use its parent as container
+      if (row.parentElement) {
+        return { container: row.parentElement, insertBefore: null };
+      }
+    }
+
+    // 2. Find "Booking options" heading and use the next sibling container
+    var headings = document.querySelectorAll('h2, h3, [role="heading"]');
+    for (var h = 0; h < headings.length; h++) {
+      if (/booking\s*options/i.test(headings[h].textContent || '')) {
+        // Walk up a couple levels to find the section container
+        var section = headings[h].parentElement;
+        for (var p = 0; p < 4; p++) {
+          if (!section) break;
+          // Look for a child that contains multiple "Book with" entries
+          var kids = section.children;
+          for (var c = 0; c < kids.length; c++) {
+            var bookCount = (kids[c].textContent || '').split(/Book with/i).length - 1;
+            if (bookCount >= 2) {
+              return { container: kids[c], insertBefore: null };
+            }
+          }
+          section = section.parentElement;
         }
       }
     }
+
     return null;
   }
 
