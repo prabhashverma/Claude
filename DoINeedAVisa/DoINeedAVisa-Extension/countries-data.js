@@ -211,6 +211,12 @@ var DINAV_DOOR_OPENER_VISAS = [
   { code: 'ARE', iso2: 'AE', name: 'UAE', visaId: 'AE_residence' }
 ];
 
+var DINAV_LOUNGE_OPTIONS = [
+  { id: 'priority_pass', name: 'Priority Pass' },
+  { id: 'dragon_pass', name: 'Dragon Pass' },
+  { id: 'lounge_key', name: 'Lounge Key' }
+];
+
 var DINAV_SCHENGEN_MEMBERS = [
   'AUT','BEL','BGR','HRV','CZE','DNK','EST','FIN','FRA','DEU','GRC','HUN','ISL','ITA',
   'LVA','LIE','LTU','LUX','MLT','NLD','NOR','POL','PRT','ROU','SVK','SVN','ESP','SWE','CHE'

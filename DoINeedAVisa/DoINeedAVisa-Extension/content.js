@@ -213,9 +213,12 @@
   }
 
   function createBookingRow() {
-    // Fully inline-styled row that matches Google Flights booking option rows
+    // Outer div for relative positioning (popover anchors here)
+    var outerDiv = document.createElement('div');
+    outerDiv.setAttribute(CTA_ATTR, 'true');
+    outerDiv.style.cssText = 'position:relative;';
+
     var wrapper = document.createElement('div');
-    wrapper.setAttribute(CTA_ATTR, 'true');
     wrapper.style.cssText = ''
       + 'display:flex; align-items:center; padding:16px 20px; cursor:pointer;'
       + 'border:1px solid var(--gm3-sys-color-outline-variant, #dadce0); border-radius:12px;'
@@ -223,14 +226,14 @@
       + 'font-family:"Google Sans",Roboto,Arial,sans-serif;'
       + 'transition:background 0.15s;';
 
-    // Logo — gradient circle with plane icon (40x40, matches partner logos)
+    // Logo — gradient circle with arrow icon
     var logo = document.createElement('div');
     logo.style.cssText = ''
       + 'width:40px; height:40px; border-radius:50%; flex-shrink:0; margin-right:16px;'
       + 'background:linear-gradient(135deg,#8ab4f8,#1a73e8);'
       + 'display:flex; align-items:center; justify-content:center;'
       + 'font-size:18px; color:#fff;';
-    logo.textContent = '\u2708';
+    logo.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>';
 
     // Text column
     var textCol = document.createElement('div');
@@ -239,29 +242,28 @@
     title.style.cssText = ''
       + 'font-size:14px; font-weight:400; line-height:20px;'
       + 'color:var(--gm3-sys-color-on-surface, #202124);';
-    title.textContent = 'Check with DoINeedAVisa';
-    var subtitle = document.createElement('div');
-    subtitle.style.cssText = ''
-      + 'font-size:12px; line-height:16px; margin-top:2px;'
-      + 'color:var(--gm3-sys-color-on-surface-variant, #70757a);';
-    subtitle.textContent = 'Set your passport to check visa';
+    title.textContent = 'Should I book this flight? Do I need a transit visa? Can I access lounge?';
     textCol.appendChild(title);
-    textCol.appendChild(subtitle);
 
-    // Passport/visa context (shown inline when passport is set)
-    var ctxSpan = document.createElement('div');
-    ctxSpan.style.cssText = ''
-      + 'display:none; align-items:center; gap:6px; margin-left:12px; flex-shrink:0;'
-      + 'font-size:13px; color:var(--gm3-sys-color-on-surface-variant, #5f6368);';
+    // Profile bar — shows passport/visa/lounge or prompt
+    var profileBar = document.createElement('div');
+    profileBar.style.cssText = ''
+      + 'background:var(--gm3-sys-color-surface-container, #f1f3f4);'
+      + 'border-radius:8px; padding:4px 12px; font-size:12px; display:inline-flex;'
+      + 'align-items:center; gap:6px; margin-top:4px; line-height:18px;';
 
-    // Price — "Free" aligned right like dollar amounts
+    var editSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="cursor:pointer;opacity:0.6;flex-shrink:0"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
+    profileBar.innerHTML = '<span style="color:#70757a">Set your passport &amp; visa to get started</span> ' + editSvg;
+    textCol.appendChild(profileBar);
+
+    // Price — "Free"
     var price = document.createElement('div');
     price.style.cssText = ''
       + 'font-size:14px; font-weight:500; white-space:nowrap; margin-left:auto; padding-left:16px;'
       + 'color:var(--gm3-sys-color-on-surface, #202124);';
     price.textContent = 'Free';
 
-    // "Continue" style outlined button
+    // "Check" outlined button
     var btn = document.createElement('button');
     btn.style.cssText = ''
       + 'margin-left:16px; padding:8px 24px; border-radius:20px;'
@@ -276,48 +278,97 @@
 
     wrapper.appendChild(logo);
     wrapper.appendChild(textCol);
-    wrapper.appendChild(ctxSpan);
     wrapper.appendChild(price);
     wrapper.appendChild(btn);
+    outerDiv.appendChild(wrapper);
 
-    // Track loaded prefs for smart click routing
+    // Track loaded prefs
     var loadedPassport = '';
     var loadedVisa = '';
+    var loadedLounge = '';
 
-    // Async load prefs and update inline context
-    chrome.storage.local.get(['dinav_passport', 'dinav_visa'], function (data) {
-      loadedPassport = data.dinav_passport || '';
-      loadedVisa = data.dinav_visa || '';
-      if (loadedPassport) {
-        var c = getCountryByIso3(loadedPassport);
-        if (c) {
-          var html = '<img src="' + flagUrl(c.code, 16)
-            + '" style="width:16px;height:12px;border-radius:2px;object-fit:cover;vertical-align:middle" alt="" /> '
-            + c.name;
-          if (loadedVisa) {
-            for (var i = 0; i < DINAV_DOOR_OPENER_VISAS.length; i++) {
-              if (DINAV_DOOR_OPENER_VISAS[i].visaId === loadedVisa) {
-                html += ' \u00b7 ' + DINAV_DOOR_OPENER_VISAS[i].name;
-                break;
-              }
+    // Inline popover for editing prefs
+    var popover = createPrefsPopover(outerDiv, function (p, v, l) {
+      loadedPassport = p;
+      loadedVisa = v;
+      loadedLounge = l;
+      updateProfileBar(p, v, l);
+    });
+
+    // Wire pencil click to toggle popover
+    function attachEditClick() {
+      var editIcon = profileBar.querySelector('svg');
+      if (editIcon) {
+        editIcon.addEventListener('click', function (e) {
+          e.stopPropagation();
+          if (popover.isVisible()) popover.hide(); else popover.show();
+        });
+      }
+    }
+    attachEditClick();
+
+    function updateProfileBar(passport, visa, lounge) {
+      if (!passport) {
+        profileBar.innerHTML = '<span style="color:#70757a">Set your passport &amp; visa to get started</span> ' + editSvg;
+      } else {
+        var c = getCountryByIso3(passport);
+        var passportHtml = c
+          ? '<img src="' + flagUrl(c.code, 16) + '" style="width:16px;height:12px;border-radius:2px;object-fit:cover;vertical-align:middle" alt="" /> ' + c.name
+          : passport;
+        var visaName = 'None';
+        if (visa) {
+          for (var i = 0; i < DINAV_DOOR_OPENER_VISAS.length; i++) {
+            if (DINAV_DOOR_OPENER_VISAS[i].visaId === visa) {
+              visaName = '<img src="' + flagUrl(DINAV_DOOR_OPENER_VISAS[i].iso2, 14) + '" style="width:14px;height:10px;border-radius:2px;object-fit:cover;vertical-align:middle" alt="" /> ' + DINAV_DOOR_OPENER_VISAS[i].name;
+              break;
             }
           }
-          ctxSpan.innerHTML = html;
-          ctxSpan.style.display = 'flex';
         }
-        subtitle.textContent = 'Visa, transit & layover check';
+        var loungeName = 'None';
+        if (lounge) {
+          for (var j = 0; j < DINAV_LOUNGE_OPTIONS.length; j++) {
+            if (DINAV_LOUNGE_OPTIONS[j].id === lounge) { loungeName = DINAV_LOUNGE_OPTIONS[j].name; break; }
+          }
+        }
+        profileBar.innerHTML = ''
+          + '<span style="color:#70757a">Passport:</span> <span style="color:#202124">' + passportHtml + '</span>'
+          + ' <span style="color:#dadce0">|</span> '
+          + '<span style="color:#70757a">Visa:</span> <span style="color:#202124">' + visaName + '</span>'
+          + ' <span style="color:#dadce0">|</span> '
+          + '<span style="color:#70757a">Lounge:</span> <span style="color:#202124">' + loungeName + '</span>'
+          + ' ' + editSvg;
+      }
+      attachEditClick();
+    }
+
+    // Load prefs and update profile bar
+    chrome.storage.local.get(['dinav_passport', 'dinav_visa', 'dinav_lounge'], function (data) {
+      loadedPassport = data.dinav_passport || '';
+      loadedVisa = data.dinav_visa || '';
+      loadedLounge = data.dinav_lounge || '';
+      updateProfileBar(loadedPassport, loadedVisa, loadedLounge);
+    });
+
+    // Check button click — open overlay
+    btn.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (popover.isVisible()) popover.hide();
+      if (!loadedPassport) {
+        openOverlay({ expandPrefs: true });
+      } else {
+        openOverlay({ autoSearch: true });
       }
     });
 
-    // Smart click: one-click search when prefs are known
+    // Row click — same as check
     wrapper.addEventListener('click', function (e) {
       e.preventDefault();
       e.stopPropagation();
+      if (popover.isVisible()) popover.hide();
       if (!loadedPassport) {
-        // No passport — open panel with prefs expanded, passport search focused
         openOverlay({ expandPrefs: true });
       } else {
-        // Passport set (with or without visa) — open panel + auto-search immediately
         openOverlay({ autoSearch: true });
       }
     });
@@ -328,7 +379,394 @@
       wrapper.style.background = '';
     });
 
-    return wrapper;
+    return outerDiv;
+  }
+
+  // ── Inline Prefs Popover ──
+
+  function getSharedPrefsCSS(t, isDark) {
+    var accentSoft = isDark ? 'rgba(138,180,248,0.08)' : (t.accent + '12');
+    var accentMed = isDark ? 'rgba(138,180,248,0.15)' : (t.accent + '1A');
+    return ''
+      + '.dinav-field { margin-bottom: 14px; }'
+      + '.dinav-field label {'
+      + '  display: block; font-size: 10px; color: ' + t.textDim + ';'
+      + '  margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.12em;'
+      + '}'
+      + '.dinav-flag { width: 16px; height: 12px; border-radius: 2px; object-fit: cover; vertical-align: middle; flex-shrink: 0; }'
+      + '.dinav-custom-select { position: relative; }'
+      + '.dinav-select-trigger {'
+      + '  display: flex; align-items: center; justify-content: space-between; gap: 8px;'
+      + '  padding: 10px 14px; border-radius: 10px;'
+      + '  border: 1px solid ' + t.border + '; background: ' + t.cardBg + ';'
+      + '  cursor: pointer; font-family: inherit; font-size: 13px; color: ' + t.textPrimary + ';'
+      + '  transition: border-color 0.2s;'
+      + '}'
+      + '.dinav-select-trigger:hover { border-color: ' + t.accent + '; }'
+      + '.dinav-select-value { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }'
+      + '.dinav-select-arrow { color: ' + t.textDim + '; font-size: 10px; flex-shrink: 0; }'
+      + '.dinav-select-menu {'
+      + '  display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0;'
+      + '  background: ' + t.cardBg + '; border: 1px solid ' + t.border + '; border-radius: 10px;'
+      + '  z-index: 10; overflow: hidden;'
+      + '  box-shadow: 0 8px 24px rgba(0,0,0,0.25);'
+      + '}'
+      + '.dinav-select-menu.open { display: block; }'
+      + '.dinav-select-search {'
+      + '  width: 100%; padding: 10px 14px; border: none; border-bottom: 1px solid ' + t.border + ';'
+      + '  background: transparent; color: ' + t.textPrimary + '; font-size: 13px;'
+      + '  font-family: inherit; outline: none;'
+      + '}'
+      + '.dinav-select-search::placeholder { color: ' + t.textDim + '; }'
+      + '.dinav-select-list { max-height: 200px; overflow-y: auto; }'
+      + '.dinav-select-list::-webkit-scrollbar { width: 6px; }'
+      + '.dinav-select-list::-webkit-scrollbar-track { background: transparent; }'
+      + '.dinav-select-list::-webkit-scrollbar-thumb { background: ' + t.border + '; border-radius: 3px; }'
+      + '.dinav-select-row {'
+      + '  display: flex; align-items: center; gap: 8px; padding: 8px 14px;'
+      + '  cursor: pointer; font-size: 13px; color: ' + t.textPrimary + ';'
+      + '  transition: background 0.15s;'
+      + '}'
+      + '.dinav-select-row:hover { background: ' + t.hoverBg + '; }'
+      + '.dinav-select-row.selected { background: ' + accentSoft + '; }'
+      + '.dinav-select-group-label {'
+      + '  padding: 6px 14px; font-size: 9px; color: ' + t.textDim + ';'
+      + '  letter-spacing: 0.1em; text-transform: uppercase;'
+      + '}'
+      + '.dinav-select-divider { height: 1px; background: ' + t.border + '; margin: 2px 0; }'
+      + '.dinav-visa-pills { display: flex; flex-wrap: wrap; gap: 8px; }'
+      + '.dinav-visa-pill {'
+      + '  all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;'
+      + '  padding: 8px 14px; border-radius: 20px; font-size: 12px;'
+      + '  font-family: inherit;'
+      + '  border: 1px solid ' + t.border + '; background: transparent;'
+      + '  color: ' + t.textSecondary + '; transition: all 0.2s;'
+      + '}'
+      + '.dinav-visa-pill:hover { border-color: ' + t.accent + '; color: ' + t.textPrimary + '; }'
+      + '.dinav-visa-pill.active {'
+      + '  border-color: ' + t.accent + '; background: ' + accentMed + ';'
+      + '  color: ' + t.accent + ';'
+      + '}'
+      + '.dinav-visa-empty { font-size: 12px; color: ' + t.textDim + '; }'
+      + '.dinav-btn-primary {'
+      + '  width: 100%; padding: 12px; border: none; border-radius: 10px;'
+      + '  background: ' + t.accent + '; color: #fff; font-size: 13px; font-weight: 600;'
+      + '  cursor: pointer; font-family: "Syne", sans-serif; letter-spacing: -0.01em;'
+      + '}'
+      + '.dinav-btn-primary:hover { opacity: 0.9; }'
+      + '.dinav-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }';
+  }
+
+  function createPrefsPopover(anchorEl, onSave) {
+    var popHost = null;
+    var popShadow = null;
+    var outsideListener = null;
+
+    function buildPopoverHTML() {
+      return ''
+        + '<div class="dinav-pop-card">'
+        + '  <div class="dinav-pop-header">'
+        + '    <span class="dinav-pop-title">Travel Profile</span>'
+        + '    <button class="dinav-pop-close">&times;</button>'
+        + '  </div>'
+        + '  <input type="hidden" id="dinav-pop-passport" value="" />'
+        + '  <input type="hidden" id="dinav-pop-visa" value="" />'
+        + '  <input type="hidden" id="dinav-pop-lounge" value="" />'
+        + '  <div class="dinav-field">'
+        + '    <label>Passport</label>'
+        + '    <div class="dinav-custom-select" id="dinav-pop-passport-dropdown">'
+        + '      <div class="dinav-select-trigger" id="dinav-pop-passport-trigger">'
+        + '        <span class="dinav-select-value" id="dinav-pop-passport-label">Select passport</span>'
+        + '        <span class="dinav-select-arrow">&#9662;</span>'
+        + '      </div>'
+        + '      <div class="dinav-select-menu" id="dinav-pop-passport-menu">'
+        + '        <input type="text" class="dinav-select-search" id="dinav-pop-passport-search" placeholder="Search countries..." />'
+        + '        <div class="dinav-select-list" id="dinav-pop-passport-list"></div>'
+        + '      </div>'
+        + '    </div>'
+        + '  </div>'
+        + '  <div class="dinav-field">'
+        + '    <label>Visa held</label>'
+        + '    <div class="dinav-visa-pills" id="dinav-pop-visa-pills"></div>'
+        + '  </div>'
+        + '  <div class="dinav-field">'
+        + '    <label>Lounge access</label>'
+        + '    <div class="dinav-lounge-pills" id="dinav-pop-lounge-pills"></div>'
+        + '  </div>'
+        + '  <button id="dinav-pop-save" class="dinav-btn-primary">Save</button>'
+        + '</div>';
+    }
+
+    function getPopoverCSS() {
+      var t = currentTheme;
+      var isDark = currentThemeId !== 'light';
+      return ''
+        + '@import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700;800&display=swap");'
+        + '*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }'
+        + getSharedPrefsCSS(t, isDark)
+        + '.dinav-pop-card {'
+        + '  background: ' + t.cardBg + '; border: 1px solid ' + t.border + ';'
+        + '  border-radius: 12px; padding: 16px 20px;'
+        + '  box-shadow: 0 8px 32px rgba(0,0,0,0.25);'
+        + '  font-family: "DM Mono", "SF Mono", "Fira Code", monospace; font-size: 13px;'
+        + '  color: ' + t.textPrimary + '; margin-top: 4px;'
+        + '}'
+        + '.dinav-pop-header {'
+        + '  display: flex; justify-content: space-between; align-items: center;'
+        + '  margin-bottom: 14px;'
+        + '}'
+        + '.dinav-pop-title {'
+        + '  font-family: "Syne", sans-serif; font-size: 14px; font-weight: 600;'
+        + '  color: ' + t.textPrimary + ';'
+        + '}'
+        + '.dinav-pop-close {'
+        + '  background: none; border: none; color: ' + t.textDim + '; font-size: 20px;'
+        + '  cursor: pointer; padding: 2px 6px; border-radius: 4px; font-family: inherit; line-height: 1;'
+        + '}'
+        + '.dinav-pop-close:hover { color: ' + t.textPrimary + '; background: ' + t.hoverBg + '; }';
+    }
+
+    function show() {
+      if (popHost) return;
+      popHost = document.createElement('div');
+      popHost.style.cssText = 'position:absolute;top:100%;left:0;right:0;z-index:9999;';
+      popShadow = popHost.attachShadow({ mode: 'closed' });
+
+      var style = document.createElement('style');
+      style.textContent = getPopoverCSS();
+      popShadow.appendChild(style);
+
+      var wrapper = document.createElement('div');
+      wrapper.innerHTML = buildPopoverHTML();
+      popShadow.appendChild(wrapper);
+      anchorEl.appendChild(popHost);
+
+      buildPassportListIn(popShadow, 'dinav-pop-', '');
+      renderVisaPillsIn(popShadow, 'dinav-pop-', '');
+      renderLoungePillsIn(popShadow, 'dinav-pop-');
+
+      chrome.storage.local.get(['dinav_passport', 'dinav_visa', 'dinav_lounge'], function (data) {
+        if (!popShadow) return;
+        if (data.dinav_passport) {
+          selectPassportIn(popShadow, 'dinav-pop-', data.dinav_passport, true);
+          renderVisaPillsIn(popShadow, 'dinav-pop-', data.dinav_passport);
+        }
+        if (data.dinav_visa) {
+          var visaInput = popShadow.querySelector('#dinav-pop-visa');
+          if (visaInput) visaInput.value = data.dinav_visa;
+          renderVisaPillsIn(popShadow, 'dinav-pop-', data.dinav_passport || '');
+        }
+        if (data.dinav_lounge) {
+          var loungeInput = popShadow.querySelector('#dinav-pop-lounge');
+          if (loungeInput) loungeInput.value = data.dinav_lounge;
+          renderLoungePillsIn(popShadow, 'dinav-pop-');
+        }
+      });
+
+      popShadow.querySelector('#dinav-pop-passport-trigger').addEventListener('click', function () {
+        var menu = popShadow.querySelector('#dinav-pop-passport-menu');
+        var isOpen = menu.classList.contains('open');
+        menu.classList.toggle('open');
+        if (!isOpen) {
+          var input = popShadow.querySelector('#dinav-pop-passport-search');
+          input.value = '';
+          buildPassportListIn(popShadow, 'dinav-pop-', '');
+          setTimeout(function () { input.focus(); }, 50);
+        }
+      });
+
+      popShadow.querySelector('#dinav-pop-passport-search').addEventListener('input', function () {
+        buildPassportListIn(popShadow, 'dinav-pop-', this.value);
+      });
+
+      wrapper.addEventListener('click', function (e) {
+        var dropdown = popShadow.querySelector('#dinav-pop-passport-dropdown');
+        if (dropdown && !dropdown.contains(e.target)) {
+          popShadow.querySelector('#dinav-pop-passport-menu').classList.remove('open');
+        }
+      });
+
+      popShadow.querySelector('.dinav-pop-close').addEventListener('click', function () { hide(); });
+
+      popShadow.querySelector('#dinav-pop-save').addEventListener('click', function () {
+        var passport = popShadow.querySelector('#dinav-pop-passport').value;
+        var visa = popShadow.querySelector('#dinav-pop-visa').value;
+        var lounge = popShadow.querySelector('#dinav-pop-lounge').value;
+        chrome.storage.local.set({ dinav_passport: passport, dinav_visa: visa, dinav_lounge: lounge });
+        if (onSave) onSave(passport, visa, lounge);
+        hide();
+      });
+
+      var searchInput = popShadow.querySelector('#dinav-pop-passport-search');
+      var passportMenu = popShadow.querySelector('#dinav-pop-passport-menu');
+      passportMenu.classList.add('open');
+      setTimeout(function () { if (searchInput) searchInput.focus(); }, 100);
+
+      outsideListener = function (e) {
+        if (popHost && !popHost.contains(e.target)) hide();
+      };
+      setTimeout(function () {
+        document.addEventListener('click', outsideListener, { capture: true });
+      }, 0);
+    }
+
+    function hide() {
+      if (outsideListener) {
+        document.removeEventListener('click', outsideListener, { capture: true });
+        outsideListener = null;
+      }
+      if (popHost) { popHost.remove(); popHost = null; popShadow = null; }
+    }
+
+    function isVisible() { return !!popHost; }
+
+    return { show: show, hide: hide, isVisible: isVisible };
+  }
+
+  // ── Parameterized selection functions (work with any root + prefix) ──
+
+  function buildPassportListIn(root, prefix, query) {
+    if (!root) return;
+    var list = root.querySelector('#' + prefix + 'passport-list');
+    if (!list) return;
+    list.innerHTML = '';
+    var q = (query || '').toLowerCase().trim();
+    var currentVal = root.querySelector('#' + prefix + 'passport').value;
+
+    var POPULAR = ['IND', 'USA', 'GBR', 'CHN', 'PHL', 'NGA', 'BRA', 'MEX', 'PAK', 'CAN'];
+    var popular = [];
+    var rest = [];
+
+    for (var i = 0; i < DINAV_COUNTRIES.length; i++) {
+      var c = DINAV_COUNTRIES[i];
+      if (q && c.name.toLowerCase().indexOf(q) === -1 && c.iso3.toLowerCase().indexOf(q) === -1 && c.code.toLowerCase().indexOf(q) === -1) continue;
+      if (!q && POPULAR.indexOf(c.iso3) !== -1) {
+        popular.push(c);
+      } else {
+        rest.push(c);
+      }
+    }
+
+    popular.sort(function (a, b) { return POPULAR.indexOf(a.iso3) - POPULAR.indexOf(b.iso3); });
+
+    function renderRow(c) {
+      var row = document.createElement('div');
+      row.className = 'dinav-select-row' + (currentVal === c.iso3 ? ' selected' : '');
+      row.innerHTML = '<img class="dinav-flag" src="' + flagUrl(c.code, 16) + '" alt="" />'
+        + '<span>' + c.name + '</span>';
+      row.addEventListener('click', function () {
+        selectPassportIn(root, prefix, c.iso3);
+        root.querySelector('#' + prefix + 'passport-menu').classList.remove('open');
+      });
+      return row;
+    }
+
+    if (popular.length > 0 && !q) {
+      var header = document.createElement('div');
+      header.className = 'dinav-select-group-label';
+      header.textContent = 'POPULAR';
+      list.appendChild(header);
+      for (var p = 0; p < popular.length; p++) list.appendChild(renderRow(popular[p]));
+      var divider = document.createElement('div');
+      divider.className = 'dinav-select-divider';
+      list.appendChild(divider);
+    }
+
+    for (var r = 0; r < rest.length; r++) list.appendChild(renderRow(rest[r]));
+  }
+
+  function selectPassportIn(root, prefix, iso3, silent) {
+    if (!root) return;
+    var hidden = root.querySelector('#' + prefix + 'passport');
+    var label = root.querySelector('#' + prefix + 'passport-label');
+    hidden.value = iso3;
+    var c = getCountryByIso3(iso3);
+    if (c) {
+      label.innerHTML = '<img class="dinav-flag" src="' + flagUrl(c.code, 16) + '" alt="" /> ' + c.name;
+    } else {
+      label.textContent = iso3 || 'Select passport';
+    }
+    if (!silent) renderVisaPillsIn(root, prefix, iso3);
+  }
+
+  function renderVisaPillsIn(root, prefix, passportIso3) {
+    if (!root) return;
+    var container = root.querySelector('#' + prefix + 'visa-pills');
+    var hiddenInput = root.querySelector('#' + prefix + 'visa');
+    if (!container) return;
+    container.innerHTML = '';
+    var filtered = getFilteredVisaOptions(passportIso3 || '');
+    var currentVisa = hiddenInput ? hiddenInput.value : '';
+
+    var nonePill = document.createElement('button');
+    nonePill.className = 'dinav-visa-pill' + (!currentVisa ? ' active' : '');
+    nonePill.textContent = 'None';
+    nonePill.addEventListener('click', function () {
+      hiddenInput.value = '';
+      var all = container.querySelectorAll('.dinav-visa-pill');
+      for (var i = 0; i < all.length; i++) all[i].classList.remove('active');
+      nonePill.classList.add('active');
+    });
+    container.appendChild(nonePill);
+
+    for (var i = 0; i < filtered.length; i++) {
+      (function (v) {
+        var pill = document.createElement('button');
+        pill.className = 'dinav-visa-pill' + (currentVisa === v.visaId ? ' active' : '');
+        pill.innerHTML = '<img class="dinav-flag" src="' + flagUrl(v.iso2, 14) + '" alt="" /> ' + v.name;
+        pill.addEventListener('click', function () {
+          var wasActive = pill.classList.contains('active');
+          var all = container.querySelectorAll('.dinav-visa-pill');
+          for (var j = 0; j < all.length; j++) all[j].classList.remove('active');
+          if (wasActive) { hiddenInput.value = ''; nonePill.classList.add('active'); }
+          else { hiddenInput.value = v.visaId; pill.classList.add('active'); }
+        });
+        container.appendChild(pill);
+      })(filtered[i]);
+    }
+
+    if (filtered.length === 0 && passportIso3) {
+      var msg = document.createElement('span');
+      msg.className = 'dinav-visa-empty';
+      msg.textContent = 'No door-opener visas for this passport';
+      container.appendChild(msg);
+    }
+  }
+
+  function renderLoungePillsIn(root, prefix) {
+    if (!root) return;
+    var container = root.querySelector('#' + prefix + 'lounge-pills');
+    var hiddenInput = root.querySelector('#' + prefix + 'lounge');
+    if (!container) return;
+    container.innerHTML = '';
+    var currentLounge = hiddenInput ? hiddenInput.value : '';
+
+    var nonePill = document.createElement('button');
+    nonePill.className = 'dinav-visa-pill' + (!currentLounge ? ' active' : '');
+    nonePill.textContent = 'None';
+    nonePill.addEventListener('click', function () {
+      hiddenInput.value = '';
+      var all = container.querySelectorAll('.dinav-visa-pill');
+      for (var i = 0; i < all.length; i++) all[i].classList.remove('active');
+      nonePill.classList.add('active');
+    });
+    container.appendChild(nonePill);
+
+    for (var i = 0; i < DINAV_LOUNGE_OPTIONS.length; i++) {
+      (function (opt) {
+        var pill = document.createElement('button');
+        pill.className = 'dinav-visa-pill' + (currentLounge === opt.id ? ' active' : '');
+        pill.textContent = opt.name;
+        pill.addEventListener('click', function () {
+          var wasActive = pill.classList.contains('active');
+          var all = container.querySelectorAll('.dinav-visa-pill');
+          for (var j = 0; j < all.length; j++) all[j].classList.remove('active');
+          if (wasActive) { hiddenInput.value = ''; nonePill.classList.add('active'); }
+          else { hiddenInput.value = opt.id; pill.classList.add('active'); }
+        });
+        container.appendChild(pill);
+      })(DINAV_LOUNGE_OPTIONS[i]);
+    }
   }
 
   function createCTAButton(floating) {
@@ -391,12 +829,13 @@
     document.body.style.transition = 'margin-right 0.3s ease';
     document.body.style.marginRight = '380px';
 
-    // Build passport list and visa pills
+    // Build passport list, visa pills, and lounge pills
     buildPassportList('');
     renderVisaPills('');
+    renderLoungePills();
 
     // Load saved preferences
-    chrome.storage.local.get(['dinav_passport', 'dinav_visa'], function (data) {
+    chrome.storage.local.get(['dinav_passport', 'dinav_visa', 'dinav_lounge'], function (data) {
       if (!shadowRoot) return; // panel was closed before storage callback
       if (data.dinav_passport) {
         selectPassport(data.dinav_passport, true);
@@ -405,8 +844,14 @@
         shadowRoot.querySelector('#dinav-visa').value = data.dinav_visa;
         updateContextVisa(data.dinav_visa);
       }
-      // Render visa pills with passport context
+      if (data.dinav_lounge) {
+        var loungeInput = shadowRoot.querySelector('#dinav-lounge');
+        if (loungeInput) loungeInput.value = data.dinav_lounge;
+        updateContextLounge(data.dinav_lounge);
+      }
+      // Render visa pills with passport context + lounge pills
       renderVisaPills(data.dinav_passport || '');
+      renderLoungePills();
 
       // Determine prefs expansion
       if (opts.expandPrefs || !data.dinav_passport) {
@@ -620,6 +1065,59 @@
     }
   }
 
+  function updateContextLounge(loungeId) {
+    if (!shadowRoot) return;
+    var ctxLounge = shadowRoot.querySelector('#dinav-context-lounge');
+    if (!ctxLounge) return;
+    if (!loungeId) { ctxLounge.textContent = 'None'; return; }
+    for (var i = 0; i < DINAV_LOUNGE_OPTIONS.length; i++) {
+      if (DINAV_LOUNGE_OPTIONS[i].id === loungeId) {
+        ctxLounge.textContent = DINAV_LOUNGE_OPTIONS[i].name;
+        return;
+      }
+    }
+    ctxLounge.textContent = loungeId.replace(/_/g, ' ');
+  }
+
+  function renderLoungePills() {
+    if (!shadowRoot) return;
+    var container = shadowRoot.querySelector('#dinav-lounge-pills');
+    var hiddenInput = shadowRoot.querySelector('#dinav-lounge');
+    if (!container) return;
+    container.innerHTML = '';
+    var currentLounge = hiddenInput ? hiddenInput.value : '';
+
+    updateContextLounge(currentLounge);
+
+    var nonePill = document.createElement('button');
+    nonePill.className = 'dinav-visa-pill' + (!currentLounge ? ' active' : '');
+    nonePill.textContent = 'None';
+    nonePill.addEventListener('click', function () {
+      hiddenInput.value = '';
+      var all = container.querySelectorAll('.dinav-visa-pill');
+      for (var i = 0; i < all.length; i++) all[i].classList.remove('active');
+      nonePill.classList.add('active');
+      updateContextLounge('');
+    });
+    container.appendChild(nonePill);
+
+    for (var i = 0; i < DINAV_LOUNGE_OPTIONS.length; i++) {
+      (function (opt) {
+        var pill = document.createElement('button');
+        pill.className = 'dinav-visa-pill' + (currentLounge === opt.id ? ' active' : '');
+        pill.textContent = opt.name;
+        pill.addEventListener('click', function () {
+          var wasActive = pill.classList.contains('active');
+          var all = container.querySelectorAll('.dinav-visa-pill');
+          for (var j = 0; j < all.length; j++) all[j].classList.remove('active');
+          if (wasActive) { hiddenInput.value = ''; nonePill.classList.add('active'); updateContextLounge(''); }
+          else { hiddenInput.value = opt.id; pill.classList.add('active'); updateContextLounge(opt.id); }
+        });
+        container.appendChild(pill);
+      })(DINAV_LOUNGE_OPTIONS[i]);
+    }
+  }
+
   function closeOverlay() {
     // Restore page content position
     document.body.style.marginRight = '';
@@ -805,11 +1303,15 @@
       + '  <span class="dinav-context-sep">|</span>'
       + '  <span class="dinav-context-label">Visa:</span>'
       + '  <span id="dinav-context-visa" class="dinav-context-text">None</span>'
+      + '  <span class="dinav-context-sep">|</span>'
+      + '  <span class="dinav-context-label">Lounge:</span>'
+      + '  <span id="dinav-context-lounge" class="dinav-context-text">None</span>'
       + '  <svg class="dinav-context-edit" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>'
       + '</div>'
       // Hidden inputs
       + '<input type="hidden" id="dinav-passport" value="" />'
       + '<input type="hidden" id="dinav-visa" value="" />'
+      + '<input type="hidden" id="dinav-lounge" value="" />'
       // Collapsible passport/visa editor
       + '<div class="dinav-prefs-editor" id="dinav-prefs-editor">'
       + '  <div class="dinav-field">'
@@ -828,6 +1330,10 @@
       + '  <div class="dinav-field">'
       + '    <label>Visa held</label>'
       + '    <div class="dinav-visa-pills" id="dinav-visa-pills"></div>'
+      + '  </div>'
+      + '  <div class="dinav-field">'
+      + '    <label>Lounge access</label>'
+      + '    <div class="dinav-lounge-pills" id="dinav-lounge-pills"></div>'
       + '  </div>'
       + '</div>'
       + '<div class="dinav-body">'
@@ -849,8 +1355,10 @@
   function runVisaCheck(parsed) {
     var passportSel = shadowRoot.querySelector('#dinav-passport');
     var visaSel = shadowRoot.querySelector('#dinav-visa');
+    var loungeSel = shadowRoot.querySelector('#dinav-lounge');
     var passportIso3 = passportSel ? passportSel.value : '';
     var visaId = visaSel ? visaSel.value : '';
+    var loungeId = loungeSel ? loungeSel.value : '';
 
     if (!passportIso3) {
       alert('Please select your passport country.');
@@ -858,10 +1366,10 @@
     }
 
     // Save preferences
-    chrome.storage.local.set({ dinav_passport: passportIso3, dinav_visa: visaId });
+    chrome.storage.local.set({ dinav_passport: passportIso3, dinav_visa: visaId, dinav_lounge: loungeId });
 
     // Build payload
-    var payload = buildPayload(parsed, passportIso3, visaId);
+    var payload = buildPayload(parsed, passportIso3, visaId, loungeId);
 
     // Show results area
     var resultsDiv = shadowRoot.querySelector('#dinav-results');
@@ -911,7 +1419,7 @@
     port.postMessage({ type: 'START_STREAM', payload: payload });
   }
 
-  function buildPayload(parsed, passportIso3, visaId) {
+  function buildPayload(parsed, passportIso3, visaId, loungeId) {
     var passportIso2 = iso3ToIso2(passportIso3) || passportIso3;
     var slices = [];
     for (var i = 0; i < parsed.slices.length; i++) {
@@ -937,7 +1445,8 @@
     return {
       passengers: [{
         nationality: passportIso2,
-        visas: visaId ? [visaId] : []
+        visas: visaId ? [visaId] : [],
+        lounge_access: loungeId ? [loungeId] : []
       }],
       slices: slices
     };
