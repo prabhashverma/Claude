@@ -4,6 +4,8 @@ Build employer reference table from FEIN data, then backfill FEINs onto older re
 Steps:
 1. Extract all records with FEIN (FY2024+) → build canonical employer table
 2. Backfill FEIN onto FY2021–FY2023 via exact, normalized, and fuzzy+location matching
+3. Backfill FEIN onto LCA records using the same 3-tier matching
+4. Add LCA_FILING_COUNT to employer table
 """
 
 import re
@@ -227,10 +229,139 @@ def backfill_feins(conn):
     print(f"    Unmatched:              {total_missing - matched:,}")
 
 
+def ensure_lca_fein_column(conn):
+    """Add EMPLOYER_FEIN column to lca table if it doesn't exist."""
+    # Check if lca table exists
+    has_lca = conn.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='lca'"
+    ).fetchone()[0]
+    if not has_lca:
+        print("  No lca table found — skipping LCA FEIN backfill.")
+        return False
+
+    # Check if column exists
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(lca)")]
+    if "EMPLOYER_FEIN" not in cols:
+        conn.execute("ALTER TABLE lca ADD COLUMN EMPLOYER_FEIN TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_lca_fein ON lca(EMPLOYER_FEIN)")
+        conn.commit()
+        print("  Added EMPLOYER_FEIN column to lca table.")
+    return True
+
+
+def backfill_lca_feins(conn):
+    """Backfill FEINs onto LCA records using the same 3-tier matching as PERM."""
+    print("\nBackfilling FEINs onto LCA records...")
+
+    if not ensure_lca_fein_column(conn):
+        return
+
+    total_missing = conn.execute(
+        "SELECT COUNT(*) FROM lca WHERE EMPLOYER_FEIN IS NULL OR EMPLOYER_FEIN = ''"
+    ).fetchone()[0]
+    print(f"  LCA records missing FEIN: {total_missing:,}")
+
+    if total_missing == 0:
+        print("  Nothing to backfill.")
+        return
+
+    exact_lookup, norm_lookup = build_name_lookup(conn)
+    norm_state_lookup = build_norm_state_lookup(conn)
+
+    rows = conn.execute("""
+        SELECT rowid, EMPLOYER_NAME, EMPLOYER_STATE
+        FROM lca
+        WHERE EMPLOYER_FEIN IS NULL OR EMPLOYER_FEIN = ''
+    """).fetchall()
+
+    exact_matches = 0
+    norm_matches = 0
+    fuzzy_matches = 0
+    updates = []
+
+    for rowid, name, state in rows:
+        if not name:
+            continue
+
+        key = name.strip().upper()
+        fein = exact_lookup.get(key)
+        if fein:
+            updates.append((fein, rowid))
+            exact_matches += 1
+            continue
+
+        nkey = normalize_name(name)
+        fein = norm_lookup.get(nkey)
+        if fein:
+            updates.append((fein, rowid))
+            norm_matches += 1
+            continue
+
+        if nkey and state:
+            fein = norm_state_lookup.get((nkey, state.strip().upper()))
+            if fein:
+                updates.append((fein, rowid))
+                fuzzy_matches += 1
+                continue
+
+    if updates:
+        conn.executemany("UPDATE lca SET EMPLOYER_FEIN = ? WHERE rowid = ?", updates)
+        conn.commit()
+
+    matched = exact_matches + norm_matches + fuzzy_matches
+    rate = (matched / total_missing * 100) if total_missing > 0 else 0
+    print(f"\n  LCA match results:")
+    print(f"    Exact name match:       {exact_matches:,}")
+    print(f"    Normalized match:       {norm_matches:,}")
+    print(f"    Fuzzy + location match: {fuzzy_matches:,}")
+    print(f"    Total matched:          {matched:,} / {total_missing:,} ({rate:.1f}%)")
+    print(f"    Unmatched:              {total_missing - matched:,}")
+
+
+def enrich_employer_lca_counts(conn):
+    """Add LCA_FILING_COUNT and LCA_TOTAL_POSITIONS to the employer table."""
+    print("\nEnriching employer table with LCA counts...")
+
+    # Add columns if missing
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(employer)")]
+    if "LCA_FILING_COUNT" not in cols:
+        conn.execute("ALTER TABLE employer ADD COLUMN LCA_FILING_COUNT INTEGER DEFAULT 0")
+    if "LCA_TOTAL_POSITIONS" not in cols:
+        conn.execute("ALTER TABLE employer ADD COLUMN LCA_TOTAL_POSITIONS INTEGER DEFAULT 0")
+
+    has_lca = conn.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='lca'"
+    ).fetchone()[0]
+    if not has_lca:
+        conn.commit()
+        return
+
+    # Aggregate LCA counts per FEIN
+    rows = conn.execute("""
+        SELECT EMPLOYER_FEIN,
+               COUNT(*) as filing_count,
+               SUM(CASE WHEN TOTAL_WORKER_POSITIONS IS NOT NULL
+                   THEN CAST(TOTAL_WORKER_POSITIONS AS INTEGER) ELSE 1 END) as total_positions
+        FROM lca
+        WHERE EMPLOYER_FEIN IS NOT NULL AND EMPLOYER_FEIN != ''
+        GROUP BY EMPLOYER_FEIN
+    """).fetchall()
+
+    updates = [(cnt, pos, fein) for fein, cnt, pos in rows]
+    conn.executemany(
+        "UPDATE employer SET LCA_FILING_COUNT = ?, LCA_TOTAL_POSITIONS = ? WHERE FEIN = ?",
+        updates,
+    )
+    conn.commit()
+
+    enriched = sum(1 for _, cnt, _ in rows if cnt > 0)
+    print(f"  Enriched {enriched:,} employers with LCA filing counts")
+
+
 def print_stats(conn):
     """Print final FEIN coverage stats."""
     print(f"\n{'='*50}")
-    print("FEIN coverage by fiscal year:")
+    print("PERM — FEIN coverage by fiscal year:")
     rows = conn.execute("""
         SELECT FISCAL_YEAR,
                COUNT(*) as total,
@@ -243,6 +374,18 @@ def print_stats(conn):
         pct = (with_fein / total * 100) if total > 0 else 0
         print(f"  {fy}: {with_fein:,} / {total:,} ({pct:.1f}%)")
 
+    # LCA coverage
+    has_lca = conn.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='lca'"
+    ).fetchone()[0]
+    if has_lca:
+        lca_total = conn.execute("SELECT COUNT(*) FROM lca").fetchone()[0]
+        lca_with_fein = conn.execute(
+            "SELECT COUNT(*) FROM lca WHERE EMPLOYER_FEIN IS NOT NULL AND EMPLOYER_FEIN != ''"
+        ).fetchone()[0]
+        pct = (lca_with_fein / lca_total * 100) if lca_total > 0 else 0
+        print(f"\nLCA — FEIN coverage: {lca_with_fein:,} / {lca_total:,} ({pct:.1f}%)")
+
     total_emp = conn.execute("SELECT COUNT(*) FROM employer").fetchone()[0]
     print(f"\nEmployer reference table: {total_emp:,} entities")
     print(f"{'='*50}")
@@ -252,6 +395,8 @@ def main():
     conn = sqlite3.connect(str(DB_PATH))
     build_employer_table(conn)
     backfill_feins(conn)
+    backfill_lca_feins(conn)
+    enrich_employer_lca_counts(conn)
     print_stats(conn)
     conn.close()
     print(f"\nDone. DB: {DB_PATH}")

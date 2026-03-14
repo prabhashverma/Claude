@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PERM Search — ApplyOrNot</title>
+  <title>GreenCardTracker — PERM + H-1B Search</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
@@ -457,6 +457,66 @@
       .fr-summary { padding: 10px 14px; gap: 10px; }
     }
 
+    /* ── Tabs ── */
+    .tab-bar {
+      display: flex;
+      border-bottom: 1px solid var(--gray-200);
+      padding: 0 16px;
+    }
+    .tab-btn {
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--gray-400);
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      transition: color var(--transition), border-color var(--transition);
+      font-family: inherit;
+    }
+    .tab-btn:hover { color: var(--gray-600); }
+    .tab-btn.active {
+      color: var(--blue-600);
+      border-bottom-color: var(--blue-600);
+    }
+    .tab-btn .tab-count {
+      font-weight: 700;
+      margin-left: 4px;
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* ── Visa class chip ── */
+    .visa-chip {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 6px;
+      white-space: nowrap;
+    }
+    .visa-chip.h1b { background: #dbeafe; color: #1e40af; }
+    .visa-chip.e3 { background: #fce7f3; color: #9d174d; }
+    .visa-chip.h1b1 { background: #d1fae5; color: #065f46; }
+
+    /* ── PW level chip ── */
+    .pw-chip {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 6px;
+      background: var(--amber-50);
+      color: var(--amber-500);
+    }
+
+    /* ── Filing badge variants ── */
+    .filing-badge.lca {
+      background: #dbeafe;
+      color: #1e40af;
+    }
+
     /* ── Animations ── */
     @keyframes fadeSlideUp {
       from { opacity: 0; transform: translateY(12px); }
@@ -475,8 +535,8 @@
 
   <div class="hero">
     <div class="hero-content">
-      <h1>PERM Search</h1>
-      <p>Search 600K+ PERM labor certification filings (FY2021 - FY2026)</p>
+      <h1>GreenCardTracker</h1>
+      <p>Search 3M+ PERM &amp; H-1B immigration filings (FY2021 - FY2026)</p>
       <div class="stat-bar" id="stats"></div>
     </div>
   </div>
@@ -486,7 +546,7 @@
       <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
       </svg>
-      <input class="search-input" type="text" id="search" placeholder="Search employer (Google, Meta, Amazon...)" autofocus>
+      <input class="search-input" type="text" id="search" placeholder="Search employer — PERM + H-1B filings (Google, Meta, Amazon...)" autofocus>
       <button class="search-clear" id="clearBtn" onclick="clearSearch()">&times;</button>
     </div>
   </div>
@@ -494,8 +554,8 @@
   <div class="results" id="results">
     <div class="state-msg">
       <span class="icon">&#128269;</span>
-      <div class="title">Search PERM filings</div>
-      <div class="sub">Type an employer name to explore labor certification data</div>
+      <div class="title">Search immigration filings</div>
+      <div class="sub">Type an employer name to explore PERM &amp; H-1B sponsorship data</div>
     </div>
   </div>
 
@@ -510,7 +570,10 @@
     fetch('/api/stats')
       .then(r => r.json())
       .then(data => {
-        let html = `<span class="stat-pill"><strong>${Number(data.total_records).toLocaleString()}</strong>&nbsp;records</span>`;
+        let html = `<span class="stat-pill"><strong>${Number(data.perm_records || data.total_records).toLocaleString()}</strong>&nbsp;PERM</span>`;
+        if (data.lca_records) {
+          html += `<span class="stat-pill"><strong>${Number(data.lca_records).toLocaleString()}</strong>&nbsp;H-1B (LCA)</span>`;
+        }
         html += `<span class="stat-pill"><strong>${Number(data.unique_employers).toLocaleString()}</strong>&nbsp;employers</span>`;
         statsDiv.innerHTML = html;
       });
@@ -523,7 +586,7 @@
         resultsDiv.innerHTML = `
           <div class="state-msg">
             <span class="icon">&#128269;</span>
-            <div class="title">Search PERM filings</div>
+            <div class="title">Search immigration filings</div>
             <div class="sub">Type at least 2 characters to search</div>
           </div>`;
         return;
@@ -543,7 +606,7 @@
       resultsDiv.innerHTML = `
         <div class="state-msg">
           <span class="icon">&#128269;</span>
-          <div class="title">Search PERM filings</div>
+          <div class="title">Search immigration filings</div>
           <div class="sub">Type an employer name to explore labor certification data</div>
         </div>`;
     }
@@ -578,14 +641,23 @@
       el.closest('.emp-card').classList.toggle('open');
     }
 
+    let tabIdCounter = 0;
+
     function renderEntityResults(employers) {
-      const totalFilings = employers.reduce((s, e) => s + (e.FILING_COUNT || 0), 0);
-      let html = `<div class="result-count">${employers.length} employer${employers.length > 1 ? 's' : ''} &middot; ${totalFilings.toLocaleString()} total filings</div>`;
+      const totalPerm = employers.reduce((s, e) => s + (e.FILING_COUNT || 0), 0);
+      const totalLCA = employers.reduce((s, e) => s + (e.LCA_FILING_COUNT || 0), 0);
+      let html = `<div class="result-count">${employers.length} employer${employers.length > 1 ? 's' : ''} &middot; ${totalPerm.toLocaleString()} PERM &middot; ${totalLCA.toLocaleString()} H-1B filings</div>`;
 
       for (const emp of employers) {
         const filings = emp.filings || [];
-        const count = emp.FILING_COUNT || filings.length;
+        const lcaFilings = emp.lca_filings || [];
+        const permCount = emp.FILING_COUNT || filings.length;
+        const lcaCount = emp.LCA_FILING_COUNT || lcaFilings.length;
         const variants = (emp.NAME_VARIANTS || []).filter(v => v !== emp.CANONICAL_NAME);
+        const tabId = tabIdCounter++;
+
+        const hasBoth = permCount > 0 && lcaCount > 0;
+        const showTabs = hasBoth || lcaFilings.length > 0;
 
         html += `
           <div class="emp-card">
@@ -600,18 +672,35 @@
                 ${variants.length > 0 ? `<div class="emp-variants">${variants.slice(0, 5).map(v => `<span class="variant-chip">${esc(v)}</span>`).join('')}${variants.length > 5 ? `<span class="variant-chip">+${variants.length - 5} more</span>` : ''}</div>` : ''}
               </div>
               <div class="emp-right">
-                <div class="filing-badge">${count} filing${count !== 1 ? 's' : ''}</div>
+                ${permCount > 0 ? `<div class="filing-badge">${permCount} PERM</div>` : ''}
+                ${lcaCount > 0 ? `<div class="filing-badge lca">${lcaCount} H-1B</div>` : ''}
                 <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
               </div>
             </div>
             <div class="emp-body">
               <div class="emp-body-inner">
-                ${renderFilings(filings)}
+                ${showTabs ? `
+                  <div class="tab-bar">
+                    <button class="tab-btn active" onclick="switchTab(this, 'perm-${tabId}')">PERM<span class="tab-count">${filings.length}</span></button>
+                    <button class="tab-btn" onclick="switchTab(this, 'lca-${tabId}')">H-1B (LCA)<span class="tab-count">${lcaFilings.length}</span></button>
+                  </div>
+                  <div class="tab-panel active" id="perm-${tabId}">${renderFilings(filings)}</div>
+                  <div class="tab-panel" id="lca-${tabId}">${renderLCAFilings(lcaFilings)}</div>
+                ` : renderFilings(filings)}
               </div>
             </div>
           </div>`;
       }
       resultsDiv.innerHTML = html;
+    }
+
+    function switchTab(btn, panelId) {
+      const bar = btn.closest('.tab-bar');
+      const body = bar.closest('.emp-body-inner');
+      bar.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      body.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById(panelId).classList.add('active');
     }
 
     function renderFilings(filings) {
@@ -638,6 +727,49 @@
           </div>
         </div>
       `).join('');
+    }
+
+    function renderLCAFilings(filings) {
+      if (!filings || filings.length === 0) return '<div style="padding:20px;text-align:center;color:var(--gray-400);font-size:13px;">No LCA filings found</div>';
+      return filings.map(j => {
+        const vc = (j.VISA_CLASS || '').toLowerCase();
+        const vcClass = vc.includes('e-3') ? 'e3' : vc.includes('h-1b1') ? 'h1b1' : 'h1b';
+        return `
+        <div class="filing-row" onclick="this.classList.toggle('open')">
+          <div class="fr-summary">
+            <div class="fr-title-wrap">
+              <div class="fr-title">${esc(j.JOB_TITLE || '\u2014')}</div>
+              <div class="fr-soc">${esc(j.SOC_TITLE || '')}</div>
+            </div>
+            <span class="visa-chip ${vcClass}">${esc(j.VISA_CLASS || 'H-1B')}</span>
+            <div class="fr-wage">${fmtWage(j)}</div>
+            <div class="fr-date">${fmtDate(j.DECISION_DATE)}</div>
+            <svg class="fr-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+          <div class="fr-detail">
+            <div class="fr-detail-inner">
+              ${statusBadge(j.CASE_STATUS)}
+              ${j.PW_WAGE_LEVEL ? `<span class="pw-chip">Level ${esc(j.PW_WAGE_LEVEL)}</span>` : ''}
+              ${j.PREVAILING_WAGE ? `<span class="fr-chip">PW: ${fmtPW(j)}</span>` : ''}
+              ${j.TOTAL_WORKER_POSITIONS && j.TOTAL_WORKER_POSITIONS !== '1' ? `<span class="fr-chip">${esc(j.TOTAL_WORKER_POSITIONS)} positions</span>` : ''}
+              <span class="fr-chip">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                ${esc(j.WORKSITE_CITY || '')}${j.WORKSITE_STATE ? ', ' + esc(j.WORKSITE_STATE) : ''}
+              </span>
+              <span class="fy-tag">${esc(j.FISCAL_YEAR)}</span>
+            </div>
+          </div>
+        </div>
+      `}).join('');
+    }
+
+    function fmtPW(j) {
+      if (!j.PREVAILING_WAGE) return '';
+      const pw = Number(j.PREVAILING_WAGE);
+      if (isNaN(pw)) return esc(j.PREVAILING_WAGE);
+      const fmt = pw.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+      const unit = j.PW_UNIT ? '/' + j.PW_UNIT.toLowerCase().replace('year', 'yr').replace('hour', 'hr') : '';
+      return fmt + unit;
     }
 
     function renderFlatResults(data) {

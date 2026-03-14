@@ -1,0 +1,5 @@
+perm.db
+Raw/
+RawLCA/
+__pycache__/
+*.pyc
