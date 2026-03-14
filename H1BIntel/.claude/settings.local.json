@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:www.dol.gov)",
+      "Bash(cd:*)",
+      "Bash(powershell -Command \"Get-Process -Name 'node' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue\"; sleep 2; rm -f C:/AIML/H1BIntel/web/.next/dev/lock 2>/dev/null; echo \"cleaned\")",
+      "Read(//c/AIML/H1B/node_modules/**)"
+    ]
+  }
+}

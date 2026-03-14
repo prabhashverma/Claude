@@ -1,0 +1,12 @@
+.env.local
+node_modules/
+.next/
+pipeline/data/raw/
+pipeline/data/staging/
+pipeline/data/state/
+pipeline/data/review/
+pipeline/data/reference/
+web/h1bintel.db
+web/src/data/*.json
+__pycache__/
+*.pyc
