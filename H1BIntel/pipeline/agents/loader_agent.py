@@ -259,8 +259,23 @@ class LoaderAgent:
                  gc_pipeline_strength, sponsor_score, score_breakdown, score_tier,
                  top_titles, top_worksites)
                 VALUES %s ON CONFLICT (employer_id, fiscal_year) DO UPDATE SET
+                    lca_total = EXCLUDED.lca_total,
+                    lca_certified = EXCLUDED.lca_certified,
+                    lca_withdrawn = EXCLUDED.lca_withdrawn,
+                    lca_denied = EXCLUDED.lca_denied,
+                    lca_approval_rate = EXCLUDED.lca_approval_rate,
+                    perm_total = EXCLUDED.perm_total,
+                    perm_certified = EXCLUDED.perm_certified,
+                    total_workers_sponsored = EXCLUDED.total_workers_sponsored,
+                    avg_wage_offered = EXCLUDED.avg_wage_offered,
+                    median_wage_offered = EXCLUDED.median_wage_offered,
+                    perm_conversion_rate = EXCLUDED.perm_conversion_rate,
+                    gc_pipeline_strength = EXCLUDED.gc_pipeline_strength,
                     sponsor_score = EXCLUDED.sponsor_score,
-                    score_tier = EXCLUDED.score_tier""",
+                    score_breakdown = EXCLUDED.score_breakdown,
+                    score_tier = EXCLUDED.score_tier,
+                    top_titles = EXCLUDED.top_titles,
+                    top_worksites = EXCLUDED.top_worksites""",
                 stats_batch,
                 template="(%s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s::jsonb, %s::jsonb)"
             )
